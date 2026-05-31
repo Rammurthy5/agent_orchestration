@@ -15,6 +15,13 @@ class TwitterAgent(BaseAgent):
 
     agent_id = AgentID.TWITTER
 
+    def _domain_keywords(self) -> list[str]:
+        return [
+            "twitter", "tweet", "hashtag", "trending", "retweet",
+            "follower", "timeline", "social media", "x.com", "post",
+            "viral", "thread", "mention", "sentiment", "influencer",
+        ]
+
     async def reasoning(self, request: AgentRequest, steps: list[Step]) -> str:
         raise NotImplementedError
 

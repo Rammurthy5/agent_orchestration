@@ -15,6 +15,13 @@ class FlightsAgent(BaseAgent):
 
     agent_id = AgentID.FLIGHTS
 
+    def _domain_keywords(self) -> list[str]:
+        return [
+            "flight", "fly", "airline", "airport", "boarding",
+            "departure", "arrival", "layover", "connecting",
+            "plane", "aviation", "itinerary", "airfare",
+        ]
+
     async def reasoning(self, request: AgentRequest, steps: list[Step]) -> str:
         # TODO: Integrate LLM reasoning with flight-specific system prompt
         raise NotImplementedError

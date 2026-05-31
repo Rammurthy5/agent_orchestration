@@ -11,6 +11,7 @@ from agents.base.types import (
     AgentID,
     AgentRequest,
     AgentResponse,
+    OutOfScopeError,
     ReflectionResult,
     Step,
     ToolCall,
@@ -30,6 +31,7 @@ class BaseAgent(ABC):
     @traceable(name="agent.run")
     async def run(self, request: AgentRequest) -> AgentResponse:
         """Execute the full ReAct loop for a request."""
+        self.validate_query(request)
         start = time.perf_counter()
         steps: list[Step] = []
         tool_calls: list[ToolCall] = []
@@ -75,6 +77,23 @@ class BaseAgent(ABC):
     ) -> str:
         """Generate a thought based on the current state."""
         ...
+
+    def validate_query(self, request: AgentRequest) -> None:
+        """Validate that the query is within this agent's domain.
+
+        Subclasses must override `_domain_keywords` to define their scope.
+        Raises OutOfScopeError if the query has no overlap with the domain.
+        """
+        keywords = self._domain_keywords()
+        if not keywords:
+            return
+        query_lower = request.query.lower()
+        if not any(kw in query_lower for kw in keywords):
+            raise OutOfScopeError(self.agent_id.value, request.query)
+
+    def _domain_keywords(self) -> list[str]:
+        """Return keywords that define this agent's domain. Override in subclasses."""
+        return []
 
     @abstractmethod
     @traceable(name="agent.tool_selection")

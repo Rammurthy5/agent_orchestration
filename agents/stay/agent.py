@@ -15,6 +15,13 @@ class StayAgent(BaseAgent):
 
     agent_id = AgentID.STAY
 
+    def _domain_keywords(self) -> list[str]:
+        return [
+            "hotel", "stay", "accommodation", "room", "booking",
+            "hostel", "resort", "airbnb", "check-in", "check-out",
+            "lodging", "motel", "suite", "reservation", "night",
+        ]
+
     async def reasoning(self, request: AgentRequest, steps: list[Step]) -> str:
         raise NotImplementedError
 

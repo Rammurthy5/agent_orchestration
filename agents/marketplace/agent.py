@@ -15,6 +15,13 @@ class MarketplaceAgent(BaseAgent):
 
     agent_id = AgentID.MARKETPLACE
 
+    def _domain_keywords(self) -> list[str]:
+        return [
+            "buy", "price", "product", "shop", "marketplace",
+            "deal", "discount", "order", "cart", "purchase",
+            "compare", "listing", "seller", "retail", "store",
+        ]
+
     async def reasoning(self, request: AgentRequest, steps: list[Step]) -> str:
         raise NotImplementedError
 

@@ -41,6 +41,11 @@ func main() {
 	r := router.New()
 	orch := orchestrator.New(r, cfg)
 
+	if err := orch.Connect(ctx); err != nil {
+		slog.Error("failed to connect to agent service", "error", err)
+		os.Exit(1)
+	}
+
 	srv := grpc.NewServer(grpcutil.ServerOptions()...)
 	orch.Register(srv)
 

@@ -60,3 +60,12 @@ class ReflectionResult(BaseModel):
 
     should_continue: bool
     reason: str
+
+
+class OutOfScopeError(Exception):
+    """Raised when an agent receives a query outside its domain."""
+
+    def __init__(self, agent_id: str, query: str) -> None:
+        self.agent_id = agent_id
+        self.query = query
+        super().__init__(f"Agent {agent_id!r} cannot handle query: {query!r}")
