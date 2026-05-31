@@ -11,6 +11,7 @@ import time
 from concurrent import futures
 
 import grpc
+from grpc_reflection.v1alpha import reflection
 
 from agents.base import AgentID, AgentRequest, BaseAgent
 from agents.base.types import OutOfScopeError
@@ -119,6 +120,12 @@ def serve(port: int = 50052) -> None:
     orchestrator_pb2_grpc.add_AgentServiceServicer_to_server(
         AgentServiceServicer(), server
     )
+    # Enable server reflection for grpcurl / debugging tools
+    service_names = (
+        orchestrator_pb2.DESCRIPTOR.services_by_name["AgentService"].full_name,
+        reflection.SERVICE_NAME,
+    )
+    reflection.enable_server_reflection(service_names, server)
     server.add_insecure_port(f"[::]:{port}")
     server.start()
     logger.info(f"Agent service started on port {port}")

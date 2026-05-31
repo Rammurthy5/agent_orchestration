@@ -116,6 +116,57 @@ pytest evals/test_agent_scope.py -v
 pytest -k "out_of_scope" -v
 ```
 
+#### End-to-End
+
+With both services running (see [Running Locally](#running-locally)), use `grpcurl` to send requests to the orchestrator:
+
+```bash
+# Install grpcurl (if not already installed)
+brew install grpcurl   # macOS
+# or: go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
+
+# Route a flights query
+grpcurl -plaintext -d '{
+  "query": "Find flights from NYC to London",
+  "session_id": "e2e-test-1"
+}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
+
+# Route a hotel query
+grpcurl -plaintext -d '{
+  "query": "Book a hotel in Tokyo for 3 nights",
+  "session_id": "e2e-test-2"
+}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
+
+# Route a marketplace query
+grpcurl -plaintext -d '{
+  "query": "Best price for noise-cancelling headphones",
+  "session_id": "e2e-test-3"
+}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
+
+# Route a twitter query
+grpcurl -plaintext -d '{
+  "query": "What is trending on Twitter right now?",
+  "session_id": "e2e-test-4"
+}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
+
+# Verify out-of-scope rejection (should return INVALID_ARGUMENT)
+grpcurl -plaintext -d '{
+  "query": "What is the meaning of life?",
+  "session_id": "e2e-test-5"
+}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
+```
+
+You can also test the Python agent service directly:
+
+```bash
+# Call the agent service without the orchestrator
+grpcurl -plaintext -d '{
+  "agent_id": "flights",
+  "query": "Cheapest flight to San Francisco",
+  "session_id": "direct-test"
+}' localhost:50052 orchestrator.v1.AgentService/Execute
+```
+
 ## Project Structure
 
 ```

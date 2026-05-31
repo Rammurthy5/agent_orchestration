@@ -15,6 +15,7 @@ import (
 	"github.com/rsi03/agent-orchestration/internal/telemetry"
 	"github.com/rsi03/agent-orchestration/pkg/grpcutil"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -48,6 +49,7 @@ func main() {
 
 	srv := grpc.NewServer(grpcutil.ServerOptions()...)
 	orch.Register(srv)
+	reflection.Register(srv)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
 	if err != nil {

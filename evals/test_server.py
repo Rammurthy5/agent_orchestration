@@ -7,6 +7,9 @@ import pytest
 from concurrent import futures
 from unittest.mock import patch, AsyncMock
 
+from grpc_reflection.v1alpha import reflection
+from grpc_reflection.v1alpha.proto_reflection_descriptor_database import ProtoReflectionDescriptorDatabase
+
 from agents.server import AgentServiceServicer, serve
 from agents.gen.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from agents.base.types import AgentID, AgentResponse, Step, ToolCall
@@ -14,11 +17,16 @@ from agents.base.types import AgentID, AgentResponse, Step, ToolCall
 
 @pytest.fixture
 def grpc_server():
-    """Start a test gRPC server with the AgentServiceServicer."""
+    """Start a test gRPC server with the AgentServiceServicer (with reflection)."""
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
     orchestrator_pb2_grpc.add_AgentServiceServicer_to_server(
         AgentServiceServicer(), server
     )
+    service_names = (
+        orchestrator_pb2.DESCRIPTOR.services_by_name["AgentService"].full_name,
+        reflection.SERVICE_NAME,
+    )
+    reflection.enable_server_reflection(service_names, server)
     port = server.add_insecure_port("localhost:0")
     server.start()
     yield f"localhost:{port}"
@@ -126,3 +134,21 @@ class TestAgentServiceServicer:
         # The placeholder response should be returned without error
         resp = stub.Execute(req)
         assert resp.agent_id == "flights"
+
+
+class TestServerReflection:
+    """Verify gRPC server reflection is enabled so grpcurl/tooling works."""
+
+    def test_reflection_lists_services(self, grpc_server: str):
+        """Server reflection should list the AgentService."""
+        channel = grpc.insecure_channel(grpc_server)
+        ref_db = ProtoReflectionDescriptorDatabase(channel)
+        services = ref_db.get_services()
+        assert "orchestrator.v1.AgentService" in services
+
+    def test_reflection_resolves_service_descriptor(self, grpc_server: str):
+        """Server reflection should resolve the AgentService descriptor."""
+        channel = grpc.insecure_channel(grpc_server)
+        ref_db = ProtoReflectionDescriptorDatabase(channel)
+        desc = ref_db.FindFileByName("orchestrator/v1/orchestrator.proto")
+        assert desc is not None
