@@ -12,6 +12,8 @@ Multi-agent AI orchestration platform. A Go CLI and orchestrator routes natural 
 
 ## Setup
 
+### Go (Orchestrator)
+
 ```bash
 # Clone
 git clone https://github.com/rsi03/agent-orchestration.git
@@ -20,8 +22,37 @@ cd agent-orchestration
 # Install Go dependencies
 go mod tidy
 
-# Build the orchestrator
+# Build the orchestrator binary
 go build -o bin/orchestrator ./cmd/orchestrator
+```
+
+### Python (Agents)
+
+```bash
+# Create and activate a virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Install the package in editable mode with dev dependencies
+pip install -e ".[dev]"
+
+# Generate Python gRPC stubs (requires grpcio-tools)
+python -m grpc_tools.protoc \
+  -I protos \
+  --python_out=agents/gen \
+  --grpc_python_out=agents/gen \
+  protos/orchestrator/v1/orchestrator.proto
+
+# Fix import paths in generated stubs
+sed -i '' 's/from orchestrator\.v1 import/from agents.gen.orchestrator.v1 import/' \
+  agents/gen/orchestrator/v1/orchestrator_pb2_grpc.py
+```
+
+### Protobuf (Go stubs)
+
+```bash
+# Requires buf CLI (https://buf.build/docs/installation)
+buf generate protos/
 ```
 
 ## Configuration
@@ -37,23 +68,52 @@ Set environment variables (or use defaults):
 | `AGENT_TIMEOUT_SECONDS` | `30` | Per-agent call timeout |
 | `AGENT_MAX_RETRIES` | `3` | Max retry attempts on transient failures |
 
-## Running
+## Usage
+
+### Running Locally
+
+Start the Python agent service first, then the Go orchestrator:
 
 ```bash
-# Start the orchestrator
+# Terminal 1 — Python agent service (port 50052)
+source .venv/bin/activate
+python -m agents.server
+
+# Terminal 2 — Go orchestrator (port 50051)
 ./bin/orchestrator
 ```
 
-The server listens on the configured port (default `:50051`) and accepts gRPC requests.
+The orchestrator accepts gRPC requests on `:50051` and forwards them to the agent service on `:50052`.
 
-## Tests
+### Running Tests
+
+#### Go
 
 ```bash
-# Run all tests with race detection
+# Run all Go tests with race detection
 go test ./... -race -count=1
 
 # Verbose output
 go test ./... -race -count=1 -v
+
+# Run a specific package
+go test ./internal/orchestrator/ -race -count=1 -v
+```
+
+#### Python
+
+```bash
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Run all Python tests with coverage
+pytest --cov agents/ tools/ evals/
+
+# Run a specific test file
+pytest evals/test_agent_scope.py -v
+
+# Run tests matching a keyword
+pytest -k "out_of_scope" -v
 ```
 
 ## Project Structure
