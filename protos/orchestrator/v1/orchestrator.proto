@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package orchestrator.v1;
+
+option go_package = "github.com/rsi03/agent-orchestration/internal/gen/orchestratorv1";
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+// OrchestratorService is the main entrypoint for the Go orchestrator.
+// Clients (CLI) send tasks here; the orchestrator routes to the appropriate agent.
+service OrchestratorService {
+  // RouteTask dispatches a task to the appropriate agent and returns the full response.
+  rpc RouteTask(RouteTaskRequest) returns (RouteTaskResponse);
+
+  // RouteTaskStream dispatches a task and streams ReAct events in real-time.
+  rpc RouteTaskStream(RouteTaskStreamRequest) returns (stream RouteTaskStreamResponse);
+}
+
+// AgentService is implemented by the Python agent runtime.
+// The Go orchestrator calls this to execute tasks on specialized agents.
+service AgentService {
+  // Execute runs the full ReAct loop for a single agent and returns the result.
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+
+  // ExecuteStream runs the ReAct loop and streams each step as it happens.
+  rpc ExecuteStream(ExecuteStreamRequest) returns (stream ExecuteStreamResponse);
+}
+
+// RouteTaskRequest is sent by the CLI to the orchestrator.
+message RouteTaskRequest {
+  string query = 1;
+  string session_id = 2;
+  map<string, string> metadata = 3;
+}
+
+// RouteTaskResponse is the final result from the orchestrator back to the CLI.
+message RouteTaskResponse {
+  string agent_id = 1;
+  string answer = 2;
+  repeated Step reasoning_trace = 3;
+  repeated ToolCall tool_calls = 4;
+  int64 latency_ms = 5;
+}
+
+// RouteTaskStreamRequest is sent by the CLI for streaming responses.
+message RouteTaskStreamRequest {
+  string query = 1;
+  string session_id = 2;
+  map<string, string> metadata = 3;
+}
+
+// RouteTaskStreamResponse is a streaming event from orchestrator to CLI.
+message RouteTaskStreamResponse {
+  EventType event_type = 1;
+  string payload = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// ExecuteRequest is sent by the orchestrator to a specific Python agent.
+message ExecuteRequest {
+  string agent_id = 1;
+  string query = 2;
+  string session_id = 3;
+  map<string, string> metadata = 4;
+}
+
+// ExecuteResponse is the full result from a Python agent.
+message ExecuteResponse {
+  string agent_id = 1;
+  string answer = 2;
+  repeated Step steps = 3;
+  repeated ToolCall tool_calls = 4;
+  int64 latency_ms = 5;
+}
+
+// ExecuteStreamRequest is sent by the orchestrator for streaming agent execution.
+message ExecuteStreamRequest {
+  string agent_id = 1;
+  string query = 2;
+  string session_id = 3;
+  map<string, string> metadata = 4;
+}
+
+// ExecuteStreamResponse is a streaming event from the Python agent during ReAct execution.
+message ExecuteStreamResponse {
+  EventType event_type = 1;
+  string payload = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  Step step = 4;
+}
+
+// Step represents a single ReAct reasoning step.
+message Step {
+  string thought = 1;
+  string action = 2;
+  string observation = 3;
+  ToolCall tool_call = 4;
+}
+
+// ToolCall represents a single tool invocation.
+message ToolCall {
+  string tool_name = 1;
+  google.protobuf.Struct parameters = 2;
+  string result = 3;
+  int64 latency_ms = 4;
+}
+
+// EventType classifies streaming events.
+enum EventType {
+  EVENT_TYPE_UNSPECIFIED = 0;
+  EVENT_TYPE_THOUGHT = 1;
+  EVENT_TYPE_ACTION = 2;
+  EVENT_TYPE_OBSERVATION = 3;
+  EVENT_TYPE_ANSWER = 4;
+  EVENT_TYPE_ERROR = 5;
+}

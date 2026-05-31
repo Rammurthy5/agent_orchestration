@@ -1,0 +1,22 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/rsi03/agent-orchestration/internal/gen
+plugins:
+  # Go struct generation
+  - remote: buf.build/protocolbuffers/go
+    out: internal/gen
+    opt:
+      - paths=source_relative
+
+  # Go gRPC service generation
+  - remote: buf.build/grpc/go
+    out: internal/gen
+    opt:
+      - paths=source_relative
+
+  # Python stubs are generated separately via grpcio-tools for version compatibility:
+  # python -m grpc_tools.protoc -I protos --python_out=agents/gen --grpc_python_out=agents/gen protos/orchestrator/v1/orchestrator.proto
+  # Then fix imports: sed -i '' 's/from orchestrator\.v1 import/from agents.gen.orchestrator.v1 import/' agents/gen/orchestrator/v1/orchestrator_pb2_grpc.py
