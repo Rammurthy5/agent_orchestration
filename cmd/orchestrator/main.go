@@ -39,8 +39,14 @@ func main() {
 		}
 	}()
 
+	metrics, err := telemetry.InitMetrics()
+	if err != nil {
+		slog.Error("failed to init metrics", "error", err)
+		os.Exit(1)
+	}
+
 	r := router.New()
-	orch := orchestrator.New(r, cfg)
+	orch := orchestrator.New(r, cfg, metrics)
 
 	if err := orch.Connect(ctx); err != nil {
 		slog.Error("failed to connect to agent service", "error", err)

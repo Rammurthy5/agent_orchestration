@@ -17,10 +17,12 @@ func ServerOptions() []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.ChainUnaryInterceptor(
+			CorrelationIDUnaryInterceptor,
 			loggingUnaryInterceptor,
 			recoveryUnaryInterceptor,
 		),
 		grpc.ChainStreamInterceptor(
+			CorrelationIDStreamInterceptor,
 			loggingStreamInterceptor,
 		),
 	}
@@ -34,6 +36,7 @@ func loggingUnaryInterceptor(ctx context.Context, req any, info *grpc.UnaryServe
 		"method", info.FullMethod,
 		"trace_id", spanCtx.TraceID().String(),
 		"span_id", spanCtx.SpanID().String(),
+		"correlation_id", CorrelationIDFromContext(ctx),
 	)
 
 	resp, err := handler(ctx, req)
@@ -66,6 +69,7 @@ func loggingStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamSe
 		"method", info.FullMethod,
 		"trace_id", spanCtx.TraceID().String(),
 		"span_id", spanCtx.SpanID().String(),
+		"correlation_id", CorrelationIDFromContext(ss.Context()),
 	)
 
 	err := handler(srv, ss)
