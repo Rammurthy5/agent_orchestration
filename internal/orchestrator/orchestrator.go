@@ -11,6 +11,7 @@ import (
 	"github.com/rsi03/agent-orchestration/internal/retry"
 	"github.com/rsi03/agent-orchestration/internal/router"
 	"github.com/rsi03/agent-orchestration/internal/telemetry"
+	"github.com/rsi03/agent-orchestration/pkg/grpcutil"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -22,19 +23,26 @@ type Orchestrator struct {
 	router      *router.Router
 	cfg         *config.Config
 	retrier     *retry.Retrier
+	breakers    *retry.CircuitBreakerRegistry
+	metrics     *telemetry.Metrics
 	agentClient pb.AgentServiceClient
 }
 
 // New creates an Orchestrator with the given router and config.
-func New(r *router.Router, cfg *config.Config) *Orchestrator {
+func New(r *router.Router, cfg *config.Config, metrics *telemetry.Metrics) *Orchestrator {
 	return &Orchestrator{
 		router: r,
 		cfg:    cfg,
+		metrics: metrics,
 		retrier: retry.New(retry.Policy{
 			MaxAttempts:  cfg.Agents.MaxRetries,
 			InitialDelay: 100 * time.Millisecond,
 			MaxDelay:     5 * time.Second,
 			Multiplier:   2.0,
+		}),
+		breakers: retry.NewCircuitBreakerRegistry(retry.CircuitBreakerConfig{
+			FailureThreshold: 5,
+			ResetTimeout:     30 * time.Second,
 		}),
 	}
 }
@@ -72,17 +80,34 @@ func (o *Orchestrator) RouteTask(ctx context.Context, req *pb.RouteTaskRequest) 
 		return nil, fmt.Errorf("orchestrator.RouteTask: %w", err)
 	}
 
-	slog.InfoContext(ctx, "routed task", "agent", agentID, "session_id", req.GetSessionId())
+	slog.InfoContext(ctx, "routed task",
+		"agent", agentID,
+		"session_id", req.GetSessionId(),
+		"correlation_id", grpcutil.CorrelationIDFromContext(ctx),
+	)
 
+	// Check circuit breaker before attempting call
+	cb := o.breakers.Get(string(agentID))
+	if err := cb.Allow(); err != nil {
+		return nil, fmt.Errorf("orchestrator.RouteTask agent=%s: %w", agentID, err)
+	}
+
+	start := time.Now()
 	var resp *pb.ExecuteResponse
 	err = o.retrier.Do(ctx, func(ctx context.Context) error {
 		var callErr error
 		resp, callErr = o.callAgent(ctx, string(agentID), req)
 		return callErr
 	})
+
+	duration := time.Since(start)
+	o.metrics.RecordRequest(ctx, string(agentID), duration, err)
+
 	if err != nil {
+		cb.RecordFailure()
 		return nil, fmt.Errorf("orchestrator.RouteTask agent=%s: %w", agentID, err)
 	}
+	cb.RecordSuccess()
 
 	return &pb.RouteTaskResponse{
 		AgentId:        resp.GetAgentId(),

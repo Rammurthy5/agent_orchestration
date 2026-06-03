@@ -6,9 +6,10 @@ import (
 	"net"
 	"testing"
 
-	pb "github.com/rsi03/agent-orchestration/internal/gen/orchestrator/v1"
 	"github.com/rsi03/agent-orchestration/internal/config"
+	pb "github.com/rsi03/agent-orchestration/internal/gen/orchestrator/v1"
 	"github.com/rsi03/agent-orchestration/internal/router"
+	"github.com/rsi03/agent-orchestration/internal/telemetry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
@@ -39,8 +40,9 @@ func TestServerReflection(t *testing.T) {
 			MaxRetries:     1,
 		},
 	}
+	metrics, _ := telemetry.InitMetrics()
 	r := router.New()
-	orch := New(r, cfg)
+	orch := New(r, cfg, metrics)
 
 	// Create the orchestrator server WITH reflection (mimics cmd/orchestrator/main.go)
 	orchSrv := grpc.NewServer()

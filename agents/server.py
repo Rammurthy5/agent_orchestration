@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from concurrent import futures
 
 import grpc
 from grpc_reflection.v1alpha import reflection
 
-from agents.base import AgentID, AgentRequest, BaseAgent
+from agents.base import AgentID, AgentRequest, BaseAgent, Memory
+from agents.base.llm import LLMClient
 from agents.base.types import OutOfScopeError
 from agents.flights import FlightsAgent
 from agents.marketplace import MarketplaceAgent
@@ -28,12 +30,21 @@ class AgentServiceServicer(orchestrator_pb2_grpc.AgentServiceServicer):
     """gRPC servicer that dispatches requests to the appropriate Python agent."""
 
     def __init__(self) -> None:
+        self._llm = LLMClient()
+        self._memory = Memory(
+            dsn=os.getenv("DATABASE_URL", "postgresql://localhost:5432/orchestrator")
+        )
         self._agents: dict[str, BaseAgent] = {
-            AgentID.FLIGHTS: FlightsAgent(),
-            AgentID.MARKETPLACE: MarketplaceAgent(),
-            AgentID.STAY: StayAgent(),
-            AgentID.TWITTER: TwitterAgent(),
+            AgentID.FLIGHTS: FlightsAgent(llm=self._llm),
+            AgentID.MARKETPLACE: MarketplaceAgent(llm=self._llm),
+            AgentID.STAY: StayAgent(llm=self._llm),
+            AgentID.TWITTER: TwitterAgent(llm=self._llm),
         }
+        # Persistent event loop for async agent execution
+        self._loop = asyncio.new_event_loop()
+        import threading
+        self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
+        self._loop_thread.start()
 
     def Execute(self, request: orchestrator_pb2.ExecuteRequest, context: grpc.ServicerContext):
         """Run the full ReAct loop for the specified agent."""
@@ -51,9 +62,33 @@ class AgentServiceServicer(orchestrator_pb2_grpc.AgentServiceServicer):
             metadata=dict(request.metadata),
         )
 
-        loop = asyncio.new_event_loop()
+        loop = self._loop
         try:
-            response = loop.run_until_complete(agent.run(agent_request))
+            future = asyncio.run_coroutine_threadsafe(agent.run(agent_request), loop)
+            response = future.result(timeout=60)
+            # Store conversation in memory (best-effort, non-blocking on failure)
+            try:
+                from agents.base.memory import ConversationEntry
+
+                mem_future = asyncio.run_coroutine_threadsafe(
+                    self._memory.connect(), loop
+                )
+                mem_future.result(timeout=5)
+                store_future = asyncio.run_coroutine_threadsafe(
+                    self._memory.store_conversation(
+                        ConversationEntry(
+                            session_id=request.session_id,
+                            agent_id=agent_id,
+                            query=request.query,
+                            response=response.answer,
+                            latency_ms=response.latency_ms,
+                        )
+                    ),
+                    loop,
+                )
+                store_future.result(timeout=5)
+            except Exception as mem_err:
+                logger.warning("memory store failed", extra={"error": str(mem_err)})
         except NotImplementedError:
             # Agent methods not yet wired to LLM — return placeholder
             return orchestrator_pb2.ExecuteResponse(
@@ -67,11 +102,29 @@ class AgentServiceServicer(orchestrator_pb2_grpc.AgentServiceServicer):
                 f"Query out of scope for agent {agent_id!r}: {e.query}",
             )
             return orchestrator_pb2.ExecuteResponse()
+        except (ConnectionError, OSError) as e:
+            # LLM or external service unavailable — graceful degradation
+            logger.warning("agent execution failed (connectivity)", extra={
+                "agent_id": agent_id, "error": str(e),
+            })
+            return orchestrator_pb2.ExecuteResponse(
+                agent_id=agent_id,
+                answer=f"[{agent_id}] Service temporarily unavailable",
+                latency_ms=0,
+            )
         except Exception as e:
+            import httpx
+            if isinstance(e, (httpx.ConnectError, httpx.TimeoutException, httpx.HTTPStatusError)):
+                logger.warning("agent LLM call failed", extra={
+                    "agent_id": agent_id, "error": str(e),
+                })
+                return orchestrator_pb2.ExecuteResponse(
+                    agent_id=agent_id,
+                    answer=f"[{agent_id}] Service temporarily unavailable",
+                    latency_ms=0,
+                )
             context.abort(grpc.StatusCode.INTERNAL, str(e))
             return orchestrator_pb2.ExecuteResponse()
-        finally:
-            loop.close()
 
         # Convert agent response to protobuf
         pb_steps = []

@@ -9,6 +9,7 @@ import (
 	pb "github.com/rsi03/agent-orchestration/internal/gen/orchestrator/v1"
 	"github.com/rsi03/agent-orchestration/internal/config"
 	"github.com/rsi03/agent-orchestration/internal/router"
+	"github.com/rsi03/agent-orchestration/internal/telemetry"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -61,8 +62,9 @@ func newTestOrchestrator(t *testing.T, agentAddr string) *Orchestrator {
 			MaxRetries:     2,
 		},
 	}
+	metrics, _ := telemetry.InitMetrics()
 	r := router.New()
-	orch := New(r, cfg)
+	orch := New(r, cfg, metrics)
 
 	conn, err := grpc.NewClient(agentAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -155,7 +157,8 @@ func TestRouteTask_Timeout(t *testing.T) {
 		},
 	}
 	r := router.New()
-	orch := New(r, cfg)
+	metrics, _ := telemetry.InitMetrics()
+	orch := New(r, cfg, metrics)
 	conn, _ := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	orch.agentClient = pb.NewAgentServiceClient(conn)
 
