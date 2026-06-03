@@ -11,6 +11,12 @@ type Config struct {
 	Port      int
 	Telemetry TelemetryConfig
 	Agents    AgentsConfig
+	Database  DatabaseConfig
+}
+
+// DatabaseConfig holds PostgreSQL connection settings.
+type DatabaseConfig struct {
+	DSN string
 }
 
 // TelemetryConfig holds OpenTelemetry settings.
@@ -53,6 +59,9 @@ func Load() (*Config, error) {
 			Endpoint:       getEnv("AGENT_ENDPOINT", "localhost:50052"),
 			TimeoutSeconds: timeout,
 			MaxRetries:     maxRetries,
+		},
+		Database: DatabaseConfig{
+			DSN: getEnv("DATABASE_URL", "postgresql://localhost:5432/orchestrator"),
 		},
 	}, nil
 }

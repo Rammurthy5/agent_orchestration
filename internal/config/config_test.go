@@ -26,6 +26,9 @@ func TestLoad(t *testing.T) {
 					TimeoutSeconds: 30,
 					MaxRetries:     3,
 				},
+				Database: DatabaseConfig{
+					DSN: "postgresql://localhost:5432/orchestrator",
+				},
 			},
 		},
 		{
@@ -37,6 +40,7 @@ func TestLoad(t *testing.T) {
 				"AGENT_ENDPOINT":               "agents:8080",
 				"AGENT_TIMEOUT_SECONDS":        "60",
 				"AGENT_MAX_RETRIES":            "5",
+				"DATABASE_URL":                 "postgresql://db:5432/prod",
 			},
 			want: &Config{
 				Port: 9090,
@@ -48,6 +52,9 @@ func TestLoad(t *testing.T) {
 					Endpoint:       "agents:8080",
 					TimeoutSeconds: 60,
 					MaxRetries:     5,
+				},
+				Database: DatabaseConfig{
+					DSN: "postgresql://db:5432/prod",
 				},
 			},
 		},
@@ -74,6 +81,7 @@ func TestLoad(t *testing.T) {
 			envKeys := []string{
 				"ORCHESTRATOR_PORT", "OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_ENDPOINT",
 				"AGENT_ENDPOINT", "AGENT_TIMEOUT_SECONDS", "AGENT_MAX_RETRIES",
+				"DATABASE_URL",
 			}
 			for _, k := range envKeys {
 				os.Unsetenv(k)
@@ -110,6 +118,9 @@ func TestLoad(t *testing.T) {
 			}
 			if got.Agents.MaxRetries != tt.want.Agents.MaxRetries {
 				t.Errorf("Agents.MaxRetries = %d, want %d", got.Agents.MaxRetries, tt.want.Agents.MaxRetries)
+			}
+			if got.Database.DSN != tt.want.Database.DSN {
+				t.Errorf("Database.DSN = %q, want %q", got.Database.DSN, tt.want.Database.DSN)
 			}
 		})
 	}

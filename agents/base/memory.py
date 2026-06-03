@@ -1,11 +1,13 @@
 """Memory layer — PgVector-backed embedding storage and retrieval.
 
 Provides per-agent isolated memory namespaces and conversation history per session.
+Supports TTL-based retention via expires_at columns.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import asyncpg
@@ -19,7 +21,9 @@ class MemoryEntry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     agent_id: str
     content: str
+    namespace: str = "default"
     metadata: dict[str, Any] = Field(default_factory=dict)
+    ttl_hours: int | None = None  # If set, expires after this many hours
 
 
 class ConversationEntry(BaseModel):
@@ -31,6 +35,7 @@ class ConversationEntry(BaseModel):
     query: str
     response: str
     latency_ms: int | None = None
+    ttl_hours: int | None = None  # If set, expires after this many hours
 
 
 class MemorySearchResult(BaseModel):
@@ -74,17 +79,23 @@ class Memory:
         Returns:
             The stored entry's UUID.
         """
+        expires_at = None
+        if entry.ttl_hours:
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=entry.ttl_hours)
+
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO memories (id, agent_id, content, embedding, metadata)
-                VALUES ($1, $2, $3, $4::vector, $5::jsonb)
+                INSERT INTO memories (id, agent_id, namespace, content, embedding, metadata, expires_at)
+                VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7)
                 """,
                 entry.id,
                 entry.agent_id,
+                entry.namespace,
                 entry.content,
                 _vector_literal(embedding),
                 _json_dumps(entry.metadata),
+                expires_at,
             )
         return entry.id
 
@@ -94,6 +105,7 @@ class Memory:
         agent_id: str,
         query_embedding: list[float],
         limit: int = 5,
+        namespace: str = "default",
     ) -> list[MemorySearchResult]:
         """Search memories by cosine similarity within an agent's namespace.
 
@@ -101,6 +113,7 @@ class Memory:
             agent_id: Restrict search to this agent's memories.
             query_embedding: 1536-dim embedding of the query.
             limit: Max results to return.
+            namespace: Memory namespace to search within.
 
         Returns:
             List of matching memories ordered by similarity (descending).
@@ -112,11 +125,15 @@ class Memory:
                        1 - (embedding <=> $1::vector) AS similarity
                 FROM memories
                 WHERE agent_id = $2
+                  AND namespace = $3
+                  AND deleted_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > NOW())
                 ORDER BY embedding <=> $1::vector
-                LIMIT $3
+                LIMIT $4
                 """,
                 _vector_literal(query_embedding),
                 agent_id,
+                namespace,
                 limit,
             )
         return [
@@ -131,11 +148,15 @@ class Memory:
     @traceable(name="memory.store_conversation")
     async def store_conversation(self, entry: ConversationEntry) -> str:
         """Store a conversation turn."""
+        expires_at = None
+        if entry.ttl_hours:
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=entry.ttl_hours)
+
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
-                INSERT INTO conversations (id, session_id, agent_id, query, response, latency_ms)
-                VALUES ($1, $2, $3, $4, $5, $6)
+                INSERT INTO conversations (id, session_id, agent_id, query, response, latency_ms, expires_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
                 entry.id,
                 entry.session_id,
@@ -143,6 +164,7 @@ class Memory:
                 entry.query,
                 entry.response,
                 entry.latency_ms,
+                expires_at,
             )
         return entry.id
 
@@ -157,6 +179,8 @@ class Memory:
                 SELECT id, session_id, agent_id, query, response, latency_ms
                 FROM conversations
                 WHERE session_id = $1
+                  AND deleted_at IS NULL
+                  AND (expires_at IS NULL OR expires_at > NOW())
                 ORDER BY created_at DESC
                 LIMIT $2
                 """,
@@ -174,6 +198,61 @@ class Memory:
             )
             for row in reversed(rows)  # Return in chronological order
         ]
+
+    @traceable(name="memory.cleanup_expired")
+    async def cleanup_expired(self) -> int:
+        """Soft-delete expired memories and conversations. Returns count of affected rows."""
+        async with self._pool.acquire() as conn:
+            result1 = await conn.execute(
+                """
+                UPDATE memories SET deleted_at = NOW()
+                WHERE expires_at < NOW() AND deleted_at IS NULL
+                """
+            )
+            result2 = await conn.execute(
+                """
+                UPDATE conversations SET deleted_at = NOW()
+                WHERE expires_at < NOW() AND deleted_at IS NULL
+                """
+            )
+        count1 = int(result1.split()[-1]) if result1 else 0
+        count2 = int(result2.split()[-1]) if result2 else 0
+        return count1 + count2
+
+    @traceable(name="memory.purge_deleted")
+    async def purge_deleted(self, older_than_days: int = 30) -> int:
+        """Hard-delete rows that were soft-deleted more than N days ago."""
+        async with self._pool.acquire() as conn:
+            result1 = await conn.execute(
+                """
+                DELETE FROM memories
+                WHERE deleted_at < NOW() - ($1 || ' days')::interval
+                """,
+                str(older_than_days),
+            )
+            result2 = await conn.execute(
+                """
+                DELETE FROM conversations
+                WHERE deleted_at < NOW() - ($1 || ' days')::interval
+                """,
+                str(older_than_days),
+            )
+        count1 = int(result1.split()[-1]) if result1 else 0
+        count2 = int(result2.split()[-1]) if result2 else 0
+        return count1 + count2
+
+    @traceable(name="memory.delete_by_agent")
+    async def delete_by_agent(self, agent_id: str) -> int:
+        """Soft-delete all memories for a specific agent."""
+        async with self._pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE memories SET deleted_at = NOW()
+                WHERE agent_id = $1 AND deleted_at IS NULL
+                """,
+                agent_id,
+            )
+        return int(result.split()[-1]) if result else 0
 
 
 def _vector_literal(embedding: list[float]) -> str:
