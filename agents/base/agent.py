@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 from langsmith import traceable
 
+from agents.base.llm import LLMClient, LLMResponse, Message, ToolSpec
 from agents.base.types import (
     AgentID,
     AgentRequest,
@@ -27,6 +29,37 @@ class BaseAgent(ABC):
 
     agent_id: AgentID
     max_iterations: int = 10
+
+    def __init__(self, llm: LLMClient | None = None):
+        self.llm = llm or LLMClient()
+
+    def _load_system_prompt(self) -> str:
+        """Load the system prompt from this agent's prompts/ directory."""
+        agent_dir = Path(__file__).parent.parent / self.agent_id.value / "prompts" / "system.md"
+        return agent_dir.read_text()
+
+    def _build_tool_specs(self) -> list[ToolSpec]:
+        """Return available tools as LLM ToolSpec objects. Override in subclasses."""
+        return []
+
+    def _build_messages(
+        self, request: AgentRequest, steps: list[Step], extra: str | None = None
+    ) -> list[Message]:
+        """Build conversation messages from request and ReAct history."""
+        messages = [Message(role="system", content=self._load_system_prompt())]
+        messages.append(Message(role="user", content=request.query))
+
+        for step in steps:
+            messages.append(Message(role="assistant", content=f"Thought: {step.thought}"))
+            if step.action and step.observation:
+                messages.append(
+                    Message(role="tool", content=f"[{step.action}]: {step.observation}")
+                )
+
+        if extra:
+            messages.append(Message(role="user", content=extra))
+
+        return messages
 
     @traceable(name="agent.run")
     async def run(self, request: AgentRequest) -> AgentResponse:
