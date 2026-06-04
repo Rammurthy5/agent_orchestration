@@ -98,6 +98,9 @@ go test ./... -race -count=1 -v
 
 # Run a specific package
 go test ./internal/orchestrator/ -race -count=1 -v
+
+# Run a single test
+go test ./internal/orchestrator -run TestRouteTaskStream_PropagatesRecvError -count=1
 ```
 
 #### Python
@@ -106,14 +109,30 @@ go test ./internal/orchestrator/ -race -count=1 -v
 # Activate the virtual environment
 source .venv/bin/activate
 
-# Run all Python tests with coverage
-pytest --cov agents/ tools/ evals/
+# Run all Python package tests with coverage
+python -m pytest --cov agents/ tools/
 
 # Run a specific test file
-pytest evals/test_agent_scope.py -v
+python -m pytest evals/test_agent_scope.py -v
 
 # Run tests matching a keyword
-pytest -k "out_of_scope" -v
+python -m pytest -k "out_of_scope" -v
+```
+
+#### Evals
+
+```bash
+# Keep the virtual environment active
+source .venv/bin/activate
+
+# Run the evaluation suite
+python -m pytest evals/ -v
+
+# Run a specific eval file
+python -m pytest evals/test_marketplace_e2e.py -v
+
+# Run one eval by name
+python -m pytest evals/test_routing.py -k "routing_eval_suite" -v
 ```
 
 #### End-to-End
