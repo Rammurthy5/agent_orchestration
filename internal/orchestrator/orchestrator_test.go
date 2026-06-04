@@ -64,7 +64,7 @@ func newTestOrchestrator(t *testing.T, agentAddr string) *Orchestrator {
 	}
 	metrics, _ := telemetry.InitMetrics()
 	r := router.New()
-	orch := New(r, cfg, metrics)
+	orch := New(r, cfg, metrics, nil)
 
 	conn, err := grpc.NewClient(agentAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -158,7 +158,7 @@ func TestRouteTask_Timeout(t *testing.T) {
 	}
 	r := router.New()
 	metrics, _ := telemetry.InitMetrics()
-	orch := New(r, cfg, metrics)
+	orch := New(r, cfg, metrics, nil)
 	conn, _ := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	orch.agentClient = pb.NewAgentServiceClient(conn)
 

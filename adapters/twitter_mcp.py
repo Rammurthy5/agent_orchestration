@@ -1,8 +1,15 @@
-"""Twitter MCP Server adapter — used by the Twitter agent."""
+"""Twitter MCP Server adapter — used by the Twitter agent.
+
+Connects via MCP Streamable HTTP transport.
+Configuration from .vscode/mcp.json (server name: "twitter") or env vars.
+"""
+
+import os
 
 from pydantic import BaseModel
 
 from adapters.base import BaseMCPAdapter
+from adapters.mcp_config import get_server_config
 from tools.twitter import SentimentResult, TrendResult, TweetResult, TweetSearchParams
 
 
@@ -12,9 +19,17 @@ class TwitterMCPAdapter(BaseMCPAdapter):
     Provides tweet search, sentiment analysis, and trending topics.
     """
 
-    base_url = "http://localhost:8101/mcp"
-
     def __init__(self, base_url: str | None = None, auth_token: str | None = None):
+        if not base_url:
+            config = get_server_config("twitter")
+            if config:
+                base_url = config.url
+                if not auth_token and "Authorization" in config.headers:
+                    auth_header = config.headers["Authorization"]
+                    auth_token = auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
+
+        base_url = base_url or os.getenv("TWITTER_MCP_URL", "http://localhost:8101/mcp")
+        auth_token = auth_token or os.getenv("TWITTER_MCP_API_KEY", "")
         super().__init__(base_url=base_url, auth_token=auth_token)
 
     async def search_tweets(self, params: TweetSearchParams) -> list[TweetResult]:

@@ -42,7 +42,7 @@ func TestServerReflection(t *testing.T) {
 	}
 	metrics, _ := telemetry.InitMetrics()
 	r := router.New()
-	orch := New(r, cfg, metrics)
+	orch := New(r, cfg, metrics, nil)
 
 	// Create the orchestrator server WITH reflection (mimics cmd/orchestrator/main.go)
 	orchSrv := grpc.NewServer()

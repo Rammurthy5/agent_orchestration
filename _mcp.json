@@ -1,0 +1,19 @@
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "scrapebadger-api-key",
+      "description": "ScrapeBadger API Key",
+      "password": true
+    }
+  ],
+  "servers": {
+    "scrapebadger": {
+      "type": "http",
+      "url": "https://mcp.scrapebadger.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${API_KEY}"
+      }
+    }
+  }
+}

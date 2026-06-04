@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/rsi03/agent-orchestration/internal/config"
+	"github.com/rsi03/agent-orchestration/internal/db"
 	"github.com/rsi03/agent-orchestration/internal/orchestrator"
 	"github.com/rsi03/agent-orchestration/internal/router"
 	"github.com/rsi03/agent-orchestration/internal/telemetry"
@@ -45,8 +46,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Connect to database (optional — orchestrator works without it)
+	var database *db.DB
+	if cfg.Database.DSN != "" {
+		database, err = db.Connect(ctx, db.Config{DSN: cfg.Database.DSN})
+		if err != nil {
+			slog.Warn("database unavailable, running without persistence", "error", err)
+		} else {
+			defer database.Close()
+			// Run migrations
+			migrator := db.NewMigrator(database.Pool())
+			if err := migrator.Migrate(ctx); err != nil {
+				slog.Warn("migration failed", "error", err)
+			}
+		}
+	}
+
 	r := router.New()
-	orch := orchestrator.New(r, cfg, metrics)
+	orch := orchestrator.New(r, cfg, metrics, database)
 
 	if err := orch.Connect(ctx); err != nil {
 		slog.Error("failed to connect to agent service", "error", err)

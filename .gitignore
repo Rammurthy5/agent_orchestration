@@ -1,5 +1,7 @@
+*.workspace
 *.pyc
 bin/*
 prompt.md
 *pycache*
 */.*.pyc
+.vscode/*

@@ -1,6 +1,13 @@
-"""Travel Hacking Toolkit MCP adapter — used by Flights and Stay agents."""
+"""Travel Hacking Toolkit MCP adapter — used by Flights and Stay agents.
+
+Connects via MCP Streamable HTTP transport.
+Configuration from .vscode/mcp.json (server name: "travel-hacking") or env vars.
+"""
+
+import os
 
 from adapters.base import BaseMCPAdapter
+from adapters.mcp_config import get_server_config
 from tools.flights import FlightResult, FlightSearchParams, RouteComparison
 from tools.stay import AvailabilityResult, HotelResult, HotelSearchParams
 
@@ -11,9 +18,17 @@ class TravelHackingAdapter(BaseMCPAdapter):
     Provides flight search, route comparison, hotel search, and availability checking.
     """
 
-    base_url = "http://localhost:8100/mcp"
-
     def __init__(self, base_url: str | None = None, auth_token: str | None = None):
+        if not base_url:
+            config = get_server_config("travel-hacking")
+            if config:
+                base_url = config.url
+                if not auth_token and "Authorization" in config.headers:
+                    auth_header = config.headers["Authorization"]
+                    auth_token = auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
+
+        base_url = base_url or os.getenv("TRAVEL_HACKING_MCP_URL", "http://localhost:8100/mcp")
+        auth_token = auth_token or os.getenv("TRAVEL_HACKING_API_KEY", "")
         super().__init__(base_url=base_url, auth_token=auth_token)
 
     async def search_flights(self, params: FlightSearchParams) -> list[FlightResult]:

@@ -6,8 +6,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/google/uuid"
 	pb "github.com/rsi03/agent-orchestration/internal/gen/orchestrator/v1"
 	"github.com/rsi03/agent-orchestration/internal/config"
+	"github.com/rsi03/agent-orchestration/internal/db"
 	"github.com/rsi03/agent-orchestration/internal/retry"
 	"github.com/rsi03/agent-orchestration/internal/router"
 	"github.com/rsi03/agent-orchestration/internal/telemetry"
@@ -25,15 +27,17 @@ type Orchestrator struct {
 	retrier     *retry.Retrier
 	breakers    *retry.CircuitBreakerRegistry
 	metrics     *telemetry.Metrics
+	db          *db.DB
 	agentClient pb.AgentServiceClient
 }
 
 // New creates an Orchestrator with the given router and config.
-func New(r *router.Router, cfg *config.Config, metrics *telemetry.Metrics) *Orchestrator {
+func New(r *router.Router, cfg *config.Config, metrics *telemetry.Metrics, database *db.DB) *Orchestrator {
 	return &Orchestrator{
 		router: r,
 		cfg:    cfg,
 		metrics: metrics,
+		db:     database,
 		retrier: retry.New(retry.Policy{
 			MaxAttempts:  cfg.Agents.MaxRetries,
 			InitialDelay: 100 * time.Millisecond,
@@ -108,6 +112,21 @@ func (o *Orchestrator) RouteTask(ctx context.Context, req *pb.RouteTaskRequest) 
 		return nil, fmt.Errorf("orchestrator.RouteTask agent=%s: %w", agentID, err)
 	}
 	cb.RecordSuccess()
+
+	// Store conversation record (best-effort — don't fail the request on DB error)
+	if o.db != nil {
+		convID := uuid.NewString()
+		if storeErr := o.db.Conversations.Store(ctx, &db.Conversation{
+			ID:        convID,
+			SessionID: req.GetSessionId(),
+			AgentID:   string(agentID),
+			Query:     req.GetQuery(),
+			Response:  resp.GetAnswer(),
+			LatencyMs: resp.GetLatencyMs(),
+		}); storeErr != nil {
+			slog.WarnContext(ctx, "failed to store conversation", "error", storeErr)
+		}
+	}
 
 	return &pb.RouteTaskResponse{
 		AgentId:        resp.GetAgentId(),
