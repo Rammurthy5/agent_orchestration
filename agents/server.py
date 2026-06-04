@@ -46,6 +46,10 @@ class AgentServiceServicer(orchestrator_pb2_grpc.AgentServiceServicer):
         self._loop_thread = threading.Thread(target=self._loop.run_forever, daemon=True)
         self._loop_thread.start()
 
+    async def start(self) -> None:
+        await self._memory.connect()
+        logger.info("Agent service connected to memory")
+
     def Execute(self, request: orchestrator_pb2.ExecuteRequest, context: grpc.ServicerContext):
         """Run the full ReAct loop for the specified agent."""
         agent_id = request.agent_id
@@ -69,11 +73,7 @@ class AgentServiceServicer(orchestrator_pb2_grpc.AgentServiceServicer):
             # Store conversation in memory (best-effort, non-blocking on failure)
             try:
                 from agents.base.memory import ConversationEntry
-
-                mem_future = asyncio.run_coroutine_threadsafe(
-                    self._memory.connect(), loop
-                )
-                mem_future.result(timeout=5)
+                
                 store_future = asyncio.run_coroutine_threadsafe(
                     self._memory.store_conversation(
                         ConversationEntry(
@@ -166,13 +166,19 @@ class AgentServiceServicer(orchestrator_pb2_grpc.AgentServiceServicer):
         """
         context.abort(grpc.StatusCode.UNIMPLEMENTED, "streaming not yet implemented")
 
+    async def shutdown(self) -> None:
+        await self._memory.close()
+        logger.info("Agent service memory connection closed")
 
 def serve(port: int = 50052) -> None:
     """Start the Python agent gRPC server."""
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    servicer = AgentServiceServicer()
     orchestrator_pb2_grpc.add_AgentServiceServicer_to_server(
-        AgentServiceServicer(), server
+        servicer, server
     )
+    # after the loop thread starts
+    asyncio.run_coroutine_threadsafe(servicer.start(), servicer._loop).result(timeout=5)
     # Enable server reflection for grpcurl / debugging tools
     service_names = (
         orchestrator_pb2.DESCRIPTOR.services_by_name["AgentService"].full_name,

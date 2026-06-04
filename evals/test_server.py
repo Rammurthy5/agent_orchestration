@@ -152,3 +152,33 @@ class TestServerReflection:
         ref_db = ProtoReflectionDescriptorDatabase(channel)
         desc = ref_db.FindFileByName("orchestrator/v1/orchestrator.proto")
         assert desc is not None
+
+
+class TestMemoryStartup:
+    """Verify the agent server initializes shared memory once at startup."""
+
+    async def test_memory_connect_runs_once_at_startup(self):
+        servicer = AgentServiceServicer()
+        servicer._memory.connect = AsyncMock()
+        servicer._memory.store_conversation = AsyncMock()
+        servicer._agents[AgentID.FLIGHTS].run = AsyncMock(
+            return_value=AgentResponse(agent_id=AgentID.FLIGHTS, answer="done")
+        )
+
+        class DummyContext:
+            def abort(self, code, details):
+                raise AssertionError(f"unexpected abort: {code} {details}")
+
+        await servicer.start()
+        assert servicer._memory.connect.await_count == 1
+
+        req = orchestrator_pb2.ExecuteRequest(
+            agent_id="flights",
+            query="Find flights to Tokyo",
+            session_id="startup-test",
+        )
+        resp = servicer.Execute(req, DummyContext())
+
+        assert resp.agent_id == "flights"
+        assert servicer._memory.connect.await_count == 1
+        servicer._memory.store_conversation.assert_awaited_once()

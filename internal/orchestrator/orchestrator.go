@@ -2,14 +2,16 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
-	pb "github.com/rsi03/agent-orchestration/internal/gen/orchestrator/v1"
 	"github.com/rsi03/agent-orchestration/internal/config"
 	"github.com/rsi03/agent-orchestration/internal/db"
+	pb "github.com/rsi03/agent-orchestration/internal/gen/orchestrator/v1"
 	"github.com/rsi03/agent-orchestration/internal/retry"
 	"github.com/rsi03/agent-orchestration/internal/router"
 	"github.com/rsi03/agent-orchestration/internal/telemetry"
@@ -34,10 +36,10 @@ type Orchestrator struct {
 // New creates an Orchestrator with the given router and config.
 func New(r *router.Router, cfg *config.Config, metrics *telemetry.Metrics, database *db.DB) *Orchestrator {
 	return &Orchestrator{
-		router: r,
-		cfg:    cfg,
+		router:  r,
+		cfg:     cfg,
 		metrics: metrics,
-		db:     database,
+		db:      database,
 		retrier: retry.New(retry.Policy{
 			MaxAttempts:  cfg.Agents.MaxRetries,
 			InitialDelay: 100 * time.Millisecond,
@@ -161,7 +163,10 @@ func (o *Orchestrator) RouteTaskStream(req *pb.RouteTaskStreamRequest, stream gr
 	for {
 		event, err := agentStream.Recv()
 		if err != nil {
-			break
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("orchestrator.RouteTaskStream recv: %w", err)
 		}
 		if sendErr := stream.Send(&pb.RouteTaskStreamResponse{
 			EventType: event.GetEventType(),
