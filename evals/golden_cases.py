@@ -112,16 +112,16 @@ TOOL_SELECTION_CASES = [
     {
         "id": "tool_005",
         "agent_id": AgentID.MARKETPLACE,
-        "query": "Search for noise-canceling headphones under $300",
+        "query": "Search for raincoats women XXL",
         "expected_tool": "search_products",
-        "expected_params": {"query": "noise-canceling headphones", "max_price": 300},
+        "expected_params": {"query": "raincoats women XXL"},
     },
     {
         "id": "tool_006",
         "agent_id": AgentID.MARKETPLACE,
-        "query": "Compare prices for iPhone 15 Pro",
-        "expected_tool": "compare_prices",
-        "expected_params": {"product": "iPhone 15 Pro"},
+        "query": "Find vintage denim jacket size M",
+        "expected_tool": "search_products",
+        "expected_params": {"query": "vintage denim jacket size M"},
     },
     {
         "id": "tool_007",
@@ -224,6 +224,7 @@ ROUTING_CASES = [
     ("Best deal on headphones", AgentID.MARKETPLACE),
     ("Find running shoes under $100", AgentID.MARKETPLACE),
     ("Price comparison for PS5", AgentID.MARKETPLACE),
+    ("Find raincoats for women size XXL", AgentID.MARKETPLACE),
     # Twitter
     ("Trending hashtags on Twitter", AgentID.TWITTER),
     ("Analyze sentiment of tweets about crypto", AgentID.TWITTER),

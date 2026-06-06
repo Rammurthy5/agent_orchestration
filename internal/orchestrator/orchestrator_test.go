@@ -114,12 +114,15 @@ func TestRouteTask_UnknownQuery(t *testing.T) {
 	addr := startFakeAgentServer(t, fake)
 	orch := newTestOrchestrator(t, addr)
 
-	_, err := orch.RouteTask(context.Background(), &pb.RouteTaskRequest{
-		Query:     "What is the meaning of life?",
+	resp, err := orch.RouteTask(context.Background(), &pb.RouteTaskRequest{
+		Query:     "Explain quantum entanglement",
 		SessionId: "test-session",
 	})
-	if err == nil {
-		t.Fatal("expected error for unroutable query")
+	if err != nil {
+		t.Fatalf("RouteTask error: %v", err)
+	}
+	if resp.GetAgentId() != "marketplace" {
+		t.Fatalf("AgentId = %q, want marketplace", resp.GetAgentId())
 	}
 }
 

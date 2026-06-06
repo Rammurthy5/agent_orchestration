@@ -31,13 +31,8 @@ class MarketplaceAgent(BaseAgent):
         self.adapter = adapter or ScrapeBadgerAdapter()
 
     def _domain_keywords(self) -> list[str]:
-        return [
-            "buy", "price", "product", "shop", "marketplace",
-            "deal", "discount", "order", "cart", "purchase",
-            "compare", "listing", "seller", "retail", "store",
-            "size", "brand", "review", "find", "search", "best",
-            "cheap", "recommend", "coupon",
-        ]
+        # Marketplace is the fallback agent — accept all queries routed to it.
+        return []
 
     def _build_tool_specs(self) -> list[ToolSpec]:
         return [

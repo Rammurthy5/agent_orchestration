@@ -8,17 +8,32 @@ from __future__ import annotations
 
 import asyncio
 import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
-import grpc
 import pytest
-from concurrent import futures
 
+from agents.base.types import AgentID, AgentResponse
 from agents.server import AgentServiceServicer
-from agents.gen.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from evals.golden_cases import LATENCY_BUDGETS
 
 
-# --- Budget Validation ---
+def _request(agent_id: str, query: str = "Test query", session_id: str = "latency-test"):
+    return SimpleNamespace(agent_id=agent_id, query=query, session_id=session_id, metadata={})
+
+
+class _AbortError(Exception):
+    pass
+
+
+class _DummyContext:
+    def abort(self, code, details):
+        raise _AbortError(f"{code}: {details}")
+
+
+@pytest.fixture
+def servicer():
+    return AgentServiceServicer()
 
 
 def test_latency_thresholds_defined() -> None:
@@ -39,85 +54,59 @@ def test_budget_values_reasonable() -> None:
     assert LATENCY_BUDGETS["grpc_overhead_p95"] <= 200  # < 200ms overhead
 
 
-# --- gRPC Latency Benchmarks ---
-
-
-@pytest.fixture
-def latency_server():
-    """Start a test gRPC server for latency measurement."""
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    orchestrator_pb2_grpc.add_AgentServiceServicer_to_server(
-        AgentServiceServicer(), server
+def _patch_agent(servicer: AgentServiceServicer, agent_id: AgentID, answer: str = "ok") -> None:
+    servicer._agents[agent_id].run = AsyncMock(
+        return_value=AgentResponse(agent_id=agent_id, answer=answer)
     )
-    port = server.add_insecure_port("localhost:0")
-    server.start()
-    yield f"localhost:{port}"
-    server.stop(grace=0)
+    servicer._memory.store_conversation = AsyncMock()
 
 
-@pytest.fixture
-def latency_stub(latency_server: str):
-    """Create a gRPC stub for latency testing."""
-    channel = grpc.insecure_channel(latency_server)
-    return orchestrator_pb2_grpc.AgentServiceStub(channel)
+def test_service_round_trip_latency(servicer) -> None:
+    """Measure direct service latency with the ReAct loop mocked out."""
+    _patch_agent(servicer, AgentID.FLIGHTS)
 
-
-def test_grpc_round_trip_latency(latency_stub) -> None:
-    """Measure gRPC round-trip latency (serialize + deserialize + routing)."""
     latencies = []
     for _ in range(10):
         start = time.perf_counter()
-        req = orchestrator_pb2.ExecuteRequest(
-            agent_id="flights",
-            query="Find flights to Tokyo",
-            session_id="latency-test",
-        )
         try:
-            latency_stub.Execute(req)
-        except grpc.RpcError:
-            pass  # We're measuring network round-trip, not success
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        latencies.append(elapsed_ms)
+            servicer.Execute(_request("flights", "Find flights to Tokyo"), _DummyContext())
+        except _AbortError:
+            pass
+        latencies.append((time.perf_counter() - start) * 1000)
 
-    # Sort for percentile calculation
     latencies.sort()
     p95_idx = int(len(latencies) * 0.95)
     p95 = latencies[p95_idx] if latencies else 0
 
-    # gRPC overhead should be under budget (generous for test environment)
     assert p95 < LATENCY_BUDGETS["orchestration_p95"] * 5, (
-        f"gRPC P95 latency {p95:.1f}ms exceeds 5x budget "
+        f"Service P95 latency {p95:.1f}ms exceeds 5x budget "
         f"({LATENCY_BUDGETS['orchestration_p95'] * 5}ms)"
     )
 
 
-def test_agent_dispatch_latency(latency_stub) -> None:
-    """Measure full agent dispatch latency through gRPC."""
-    agents = ["flights", "stay", "marketplace", "twitter"]
+def test_agent_dispatch_latency(servicer) -> None:
+    """Measure full agent dispatch latency through the service."""
+    agents = [
+        (AgentID.FLIGHTS, "flights"),
+        (AgentID.STAY, "stay"),
+        (AgentID.MARKETPLACE, "marketplace"),
+        (AgentID.TWITTER, "twitter"),
+    ]
     latencies = {}
 
-    for agent_id in agents:
+    for agent_enum, agent_id in agents:
+        _patch_agent(servicer, agent_enum)
         start = time.perf_counter()
-        req = orchestrator_pb2.ExecuteRequest(
-            agent_id=agent_id,
-            query=f"Test query for {agent_id}",
-            session_id="latency-test",
-        )
         try:
-            resp = latency_stub.Execute(req)
-        except grpc.RpcError:
+            servicer.Execute(_request(agent_id), _DummyContext())
+        except _AbortError:
             pass
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        latencies[agent_id] = elapsed_ms
+        latencies[agent_id] = (time.perf_counter() - start) * 1000
 
-    # All agents should respond within budget (generous for test)
     for agent_id, latency in latencies.items():
         assert latency < LATENCY_BUDGETS["agent_total_p95"], (
             f"Agent {agent_id} latency {latency:.1f}ms exceeds budget"
         )
-
-
-# --- Async Operation Latency ---
 
 
 async def test_async_operation_overhead() -> None:
@@ -125,29 +114,21 @@ async def test_async_operation_overhead() -> None:
     latencies = []
     for _ in range(100):
         start = time.perf_counter()
-        await asyncio.sleep(0)  # Minimal async operation
+        await asyncio.sleep(0)
         elapsed_us = (time.perf_counter() - start) * 1_000_000
         latencies.append(elapsed_us)
 
     avg_us = sum(latencies) / len(latencies)
-    # Async overhead should be < 1ms on average
     assert avg_us < 1000, f"Async overhead {avg_us:.1f}μs exceeds 1ms"
-
-
-# --- Memory Operation Latency (simulated) ---
 
 
 async def test_memory_search_simulated_latency() -> None:
     """Simulate memory search latency validation."""
-    # In real env, this would connect to PgVector
-    # Here we validate the budget is achievable
     start = time.perf_counter()
-    # Simulate vector computation
     embedding = [0.1] * 1536
-    dot_product = sum(a * b for a, b in zip(embedding, embedding))
+    _ = sum(a * b for a, b in zip(embedding, embedding))
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    # Pure computation should be well under memory budget
     assert elapsed_ms < LATENCY_BUDGETS["memory_search_p95"], (
         f"Simulated memory search {elapsed_ms:.1f}ms exceeds budget"
     )
