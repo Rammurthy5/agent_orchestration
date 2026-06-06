@@ -52,8 +52,12 @@ class BaseAgent(ABC):
         for step in steps:
             messages.append(Message(role="assistant", content=f"Thought: {step.thought}"))
             if step.action and step.observation:
+                # Use assistant role for observation replay to avoid invalid tool message shape.
                 messages.append(
-                    Message(role="tool", content=f"[{step.action}]: {step.observation}")
+                    Message(
+                        role="assistant",
+                        content=f"Observation from {step.action}: {step.observation}",
+                    )
                 )
 
         if extra:

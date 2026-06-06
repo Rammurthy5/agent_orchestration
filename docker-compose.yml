@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: agent-orchestration-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-orchestrator}
+      POSTGRES_USER: ${POSTGRES_USER:-orchestrator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orchestrator}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  agents:
+    build:
+      context: .
+      dockerfile: Dockerfile.agents
+    container_name: agent-orchestration-agents
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-orchestrator}:${POSTGRES_PASSWORD:-orchestrator}@postgres:5432/${POSTGRES_DB:-orchestrator}
+      LLM_API_BASE: ${LLM_API_BASE:-https://api.openai.com/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-5.4-mini}
+      SCRAPE_BADGER_MCP_URL: ${SCRAPE_BADGER_MCP_URL:-}
+      SCRAPE_BADGER_API_KEY: ${SCRAPE_BADGER_API_KEY:-}
+      TRAVEL_HACKING_MCP_URL: ${TRAVEL_HACKING_MCP_URL:-}
+      TRAVEL_HACKING_API_KEY: ${TRAVEL_HACKING_API_KEY:-}
+      TWITTER_MCP_URL: ${TWITTER_MCP_URL:-}
+      TWITTER_MCP_API_KEY: ${TWITTER_MCP_API_KEY:-}
+    ports:
+      - "50052:50052"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import socket; s=socket.socket(); s.settimeout(2); s.connect(('127.0.0.1', 50052)); s.close()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    container_name: agent-orchestration-orchestrator
+    restart: unless-stopped
+    environment:
+      ORCHESTRATOR_PORT: ${ORCHESTRATOR_PORT:-50051}
+      AGENT_ENDPOINT: agents:50052
+      AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-60}
+      AGENT_MAX_RETRIES: ${AGENT_MAX_RETRIES:-3}
+      OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-orchestrator}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-disabled}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-orchestrator}:${POSTGRES_PASSWORD:-orchestrator}@postgres:5432/${POSTGRES_DB:-orchestrator}
+    ports:
+      - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      agents:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

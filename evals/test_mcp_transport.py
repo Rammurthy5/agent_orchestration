@@ -14,6 +14,16 @@ from adapters.base import BaseMCPAdapter, MCPError, MCPSessionError
 from adapters.mcp_config import MCPConfig, MCPServerConfig, load_mcp_config, get_server_config
 
 
+def _mock_response(status_code: int, *, json_data: dict | None = None, headers: dict | None = None) -> httpx.Response:
+    """Build an httpx response with an attached request for raise_for_status()."""
+    return httpx.Response(
+        status_code,
+        json=json_data,
+        headers=headers,
+        request=httpx.Request("POST", "http://localhost:9000/mcp"),
+    )
+
+
 # --- Config Loader Tests ---
 
 
@@ -150,9 +160,9 @@ class TestStreamableHTTPTransport:
 
     async def test_ensure_initialized_calls_handshake(self, adapter):
         """Verify initialize handshake is called on first use."""
-        mock_response = httpx.Response(
+        mock_response = _mock_response(
             200,
-            json={
+            json_data={
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": {
@@ -163,7 +173,7 @@ class TestStreamableHTTPTransport:
             },
             headers={"mcp-session-id": "sess-123"},
         )
-        notification_response = httpx.Response(202)
+        notification_response = _mock_response(202)
 
         call_count = 0
 
@@ -192,9 +202,9 @@ class TestStreamableHTTPTransport:
         """Verify tools/call returns parsed content."""
         adapter._initialized = True
 
-        mock_response = httpx.Response(
+        mock_response = _mock_response(
             200,
-            json={
+            json_data={
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": {
@@ -225,9 +235,9 @@ class TestStreamableHTTPTransport:
         """Verify error response raises MCPError."""
         adapter._initialized = True
 
-        mock_response = httpx.Response(
+        mock_response = _mock_response(
             200,
-            json={
+            json_data={
                 "jsonrpc": "2.0",
                 "id": 1,
                 "error": {"code": -32601, "message": "Method not found"},
@@ -261,9 +271,9 @@ class TestStreamableHTTPTransport:
             call_count += 1
             if call_count < 3:
                 raise httpx.ConnectError("Connection refused")
-            return httpx.Response(
+            return _mock_response(
                 200,
-                json={
+                json_data={
                     "jsonrpc": "2.0",
                     "id": call_count,
                     "result": {"content": [{"type": "text", "text": '{"status": "ok"}'}]},
@@ -287,9 +297,9 @@ class TestStreamableHTTPTransport:
         """Verify tools/list returns tool definitions."""
         adapter._initialized = True
 
-        mock_response = httpx.Response(
+        mock_response = _mock_response(
             200,
-            json={
+            json_data={
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": {

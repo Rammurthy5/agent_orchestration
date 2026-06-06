@@ -35,6 +35,8 @@ class MarketplaceAgent(BaseAgent):
             "buy", "price", "product", "shop", "marketplace",
             "deal", "discount", "order", "cart", "purchase",
             "compare", "listing", "seller", "retail", "store",
+            "size", "brand", "review", "find", "search", "best",
+            "cheap", "recommend", "coupon",
         ]
 
     def _build_tool_specs(self) -> list[ToolSpec]:
@@ -74,10 +76,6 @@ class MarketplaceAgent(BaseAgent):
                 params = ProductSearchParams(**tool_call.parameters)
                 results = await self.adapter.search_products(params)
                 observation = json.dumps([r.model_dump() for r in results], default=str)
-            elif tool_call.tool_name == "compare_prices":
-                product_id = tool_call.parameters.get("product_id", "")
-                result = await self.adapter.compare_prices(product_id)
-                observation = result.model_dump_json()
             else:
                 observation = f"Unknown tool: {tool_call.tool_name}"
         except Exception as e:

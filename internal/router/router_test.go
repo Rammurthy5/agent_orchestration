@@ -58,14 +58,14 @@ func TestRoute(t *testing.T) {
 			want:  AgentFlights,
 		},
 		{
-			name:    "no match",
-			query:   "What is the meaning of life?",
-			wantErr: true,
+			name:  "no match falls back to marketplace",
+			query: "What is the meaning of life?",
+			want:  AgentMarketplace,
 		},
 		{
-			name:    "empty query",
-			query:   "",
-			wantErr: true,
+			name:  "empty query falls back to marketplace",
+			query: "",
+			want:  AgentMarketplace,
 		},
 		{
 			name:  "highest score wins",

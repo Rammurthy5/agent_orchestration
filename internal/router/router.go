@@ -2,7 +2,6 @@ package router
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/rsi03/agent-orchestration/internal/telemetry"
@@ -34,7 +33,7 @@ func New() *Router {
 		rules: []routingRule{
 			{agent: AgentFlights, keywords: []string{"flight", "fly", "airline", "airport", "layover", "route"}},
 			{agent: AgentStay, keywords: []string{"hotel", "stay", "accommodation", "booking", "hostel", "room"}},
-			{agent: AgentMarketplace, keywords: []string{"product", "buy", "price", "shop", "deal", "marketplace"}},
+			{agent: AgentMarketplace, keywords: []string{"product", "buy", "price", "shop", "deal", "marketplace", "cheap", "compare", "order", "purchase", "retail", "store", "discount", "coupon", "size", "brand", "review"}},
 			{agent: AgentTwitter, keywords: []string{"tweet", "twitter", "trend", "hashtag", "social", "sentiment"}},
 		},
 	}
@@ -65,7 +64,8 @@ func (r *Router) Route(ctx context.Context, query string) (AgentID, error) {
 	}
 
 	if bestScore == 0 {
-		return "", fmt.Errorf("routing query: no matching agent for %q", query)
+		// Default to marketplace for general product/shopping queries
+		return AgentMarketplace, nil
 	}
 
 	return best, nil

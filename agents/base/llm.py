@@ -61,7 +61,7 @@ class LLMClient:
     ):
         self.api_base = api_base or os.getenv("LLM_API_BASE", "https://api.openai.com/v1")
         self.api_key = api_key or os.getenv("LLM_API_KEY", "")
-        self.model = model or os.getenv("LLM_MODEL", "gpt-4o")
+        self.model = model or os.getenv("LLM_MODEL", "gpt-5.4-mini")
         self._client = httpx.AsyncClient(timeout=60.0)
 
     async def close(self) -> None:
@@ -88,10 +88,7 @@ class LLMClient:
                     "function": {
                         "name": t.name,
                         "description": t.description,
-                        "parameters": {
-                            "type": "object",
-                            "properties": t.parameters,
-                        },
+                        "parameters": self._normalize_tool_schema(t.parameters),
                     },
                 }
                 for t in tools
@@ -124,3 +121,23 @@ class LLMClient:
             content=message.get("content") or "",
             tool_call=tool_call,
         )
+
+    def _normalize_tool_schema(self, parameters: dict[str, Any]) -> dict[str, Any]:
+        """Normalize tool parameter declarations into a valid JSON schema object."""
+        if isinstance(parameters, dict) and parameters.get("type") == "object":
+            return parameters
+
+        properties: dict[str, Any] = {}
+        for key, value in parameters.items():
+            if isinstance(value, dict):
+                properties[key] = value
+            else:
+                properties[key] = {
+                    "type": "string",
+                    "description": str(value),
+                }
+
+        return {
+            "type": "object",
+            "properties": properties,
+        }

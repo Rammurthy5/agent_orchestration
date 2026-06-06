@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
@@ -20,6 +21,16 @@ type ShutdownFunc func(ctx context.Context) error
 
 // Init configures the OpenTelemetry trace provider with an OTLP gRPC exporter.
 func Init(ctx context.Context, cfg config.TelemetryConfig) (ShutdownFunc, error) {
+	if isTelemetryDisabled(cfg.OTLPEndpoint) {
+		tp := sdktrace.NewTracerProvider()
+		otel.SetTracerProvider(tp)
+		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+			propagation.TraceContext{},
+			propagation.Baggage{},
+		))
+		return tp.Shutdown, nil
+	}
+
 	exporter, err := otlptracegrpc.New(ctx,
 		otlptracegrpc.WithEndpoint(cfg.OTLPEndpoint),
 		otlptracegrpc.WithInsecure(),
@@ -54,4 +65,9 @@ func Init(ctx context.Context, cfg config.TelemetryConfig) (ShutdownFunc, error)
 // Tracer returns a named tracer from the global provider.
 func Tracer(name string) trace.Tracer {
 	return otel.Tracer(name)
+}
+
+func isTelemetryDisabled(endpoint string) bool {
+	value := strings.ToLower(strings.TrimSpace(endpoint))
+	return value == "" || value == "disabled" || value == "none" || value == "off"
 }

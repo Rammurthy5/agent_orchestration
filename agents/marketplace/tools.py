@@ -1,20 +1,16 @@
-"""Marketplace agent tool declarations."""
+"""Marketplace agent tool declarations.
+
+Tools map to real ScrapeBadger MCP server endpoints.
+Searches Vinted UK and eBay UK only.
+"""
 
 AVAILABLE_TOOLS = [
     {
         "name": "search_products",
-        "description": "Search for products matching a query with optional filters",
+        "description": "Search for products on Vinted UK and eBay UK. Returns product names, prices in GBP, source (Vinted UK or eBay UK), and links.",
         "parameters": {
-            "query": "Product search query",
-            "max_price": "Maximum price filter (optional)",
-            "category": "Product category filter (optional)",
-        },
-    },
-    {
-        "name": "compare_prices",
-        "description": "Compare prices for a specific product across sources",
-        "parameters": {
-            "product_id": "Product identifier to compare",
+            "query": {"type": "string", "description": "Product search query"},
+            "max_price": {"type": "number", "description": "Maximum price in GBP (optional)"},
         },
     },
 ]

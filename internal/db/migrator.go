@@ -101,7 +101,8 @@ func (m *Migrator) Migrate(ctx context.Context) error {
 		}
 
 		if _, err := tx.Exec(ctx,
-			`INSERT INTO schema_migrations (version, name) VALUES ($1, $2)`,
+			`INSERT INTO schema_migrations (version, name) VALUES ($1, $2)
+			 ON CONFLICT (version) DO NOTHING`,
 			mig.version, mig.name,
 		); err != nil {
 			_ = tx.Rollback(ctx)

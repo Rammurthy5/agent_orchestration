@@ -57,16 +57,58 @@ buf generate protos/
 
 ## Configuration
 
-Set environment variables (or use defaults):
+### Environment Variables (Local Development)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ORCHESTRATOR_PORT` | `50051` | gRPC server port |
-| `OTEL_SERVICE_NAME` | `orchestrator` | OpenTelemetry service name |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | OTLP collector endpoint |
-| `AGENT_ENDPOINT` | `localhost:50052` | Python agent gRPC address |
-| `AGENT_TIMEOUT_SECONDS` | `30` | Per-agent call timeout |
-| `AGENT_MAX_RETRIES` | `3` | Max retry attempts on transient failures |
+Most variables are optional because defaults are provided. For real local runs, set at least `LLM_API_KEY` (for LLM calls) and ensure PostgreSQL is reachable via `DATABASE_URL`.
+
+#### Core service variables
+
+| Variable | Default | Required? | Used by | Description |
+|----------|---------|-----------|---------|-------------|
+| `ORCHESTRATOR_PORT` | `50051` | No | Go orchestrator | gRPC server listen port |
+| `AGENT_ENDPOINT` | `localhost:50052` | No | Go orchestrator | Python agent gRPC target |
+| `AGENT_TIMEOUT_SECONDS` | `30` | No | Go orchestrator | Per-agent call timeout |
+| `AGENT_MAX_RETRIES` | `3` | No | Go orchestrator | Retry attempts for transient failures |
+| `DATABASE_URL` | `postgresql://localhost:5432/orchestrator` | Usually | Go + Python | PostgreSQL connection string for memory, conversations, eval persistence |
+
+#### Telemetry variables
+
+| Variable | Default | Required? | Used by | Description |
+|----------|---------|-----------|---------|-------------|
+| `OTEL_SERVICE_NAME` | `orchestrator` | No | Go orchestrator | OpenTelemetry service name |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | No | Go orchestrator | OTLP collector endpoint |
+
+#### LLM variables (Python agents)
+
+| Variable | Default | Required? | Used by | Description |
+|----------|---------|-----------|---------|-------------|
+| `LLM_API_BASE` | `https://api.openai.com/v1` | No | Python agent service | OpenAI-compatible API base URL |
+| `LLM_API_KEY` | empty | Yes (for real model calls) | Python agent service | API key for chat completions |
+| `LLM_MODEL` | `gpt-5.4-mini` | No | Python agent service | Model name used for agent reasoning |
+
+#### MCP adapter fallback variables
+
+MCP adapters first read server config from `.vscode/mcp.json`. If a server entry is missing, these environment variables are used as fallback.
+
+| Variable | Default | Used by |
+|----------|---------|---------|
+| `SCRAPE_BADGER_MCP_URL` | `https://mcp.scrapebadger.com/mcp` | Marketplace / ScrapeBadger adapter |
+| `SCRAPE_BADGER_API_KEY` | empty | Marketplace / ScrapeBadger adapter |
+| `TRAVEL_HACKING_MCP_URL` | `http://localhost:8100/mcp` | Flights + Stay adapter |
+| `TRAVEL_HACKING_API_KEY` | empty | Flights + Stay adapter |
+| `TWITTER_MCP_URL` | `http://localhost:8101/mcp` | Twitter adapter |
+| `TWITTER_MCP_API_KEY` | empty | Twitter adapter |
+
+Example local exports:
+
+```bash
+export DATABASE_URL="postgresql://localhost:5432/orchestrator"
+export LLM_API_KEY="<your-api-key>"
+export LLM_MODEL="gpt-5.4-mini"
+
+# Optional MCP fallback vars (if not using .vscode/mcp.json)
+export SCRAPE_BADGER_API_KEY="<scrapebadger-key>"
+```
 
 ## Usage
 
@@ -84,6 +126,49 @@ python -m agents.server
 ```
 
 The orchestrator accepts gRPC requests on `:50051` and forwards them to the agent service on `:50052`.
+
+### Running with Docker Compose
+
+Use Docker Compose to run PostgreSQL (with pgvector), Python agents, and the Go orchestrator together.
+
+```bash
+# Copy example environment and set secrets (at least LLM_API_KEY)
+cp .env.example .env
+
+# Build and start all services
+docker compose up --build -d
+
+# Check service status
+docker compose ps
+
+# View logs (example: orchestrator)
+docker compose logs -f orchestrator
+```
+
+Service endpoints:
+
+- Orchestrator gRPC: `localhost:50051`
+- Agent service gRPC: `localhost:50052`
+- PostgreSQL: `localhost:5432`
+
+Stop and clean up:
+
+```bash
+docker compose down
+
+# Remove volumes too (deletes local postgres data)
+docker compose down -v
+```
+
+### Building Images Directly
+
+```bash
+# Go orchestrator image
+docker build -f Dockerfile.orchestrator -t agent-orchestration-orchestrator:local .
+
+# Python agent image
+docker build -f Dockerfile.agents -t agent-orchestration-agents:local .
+```
 
 ### Running Tests
 
