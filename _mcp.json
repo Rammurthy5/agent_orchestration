@@ -8,11 +8,51 @@
     }
   ],
   "servers": {
+    "travel-hacking": {
+      "type": "http",
+      "url": "http://127.0.0.1:8100/mcp",
+      "headers": {}
+    },
+    "skiplagged": {
+      "type": "http",
+      "url": "https://mcp.skiplagged.com/mcp",
+      "headers": {}
+    },
+    "kiwi": {
+      "type": "http",
+      "url": "https://mcp.kiwi.com",
+      "headers": {}
+    },
+    "trivago": {
+      "type": "http",
+      "url": "https://mcp.trivago.com/mcp",
+      "headers": {}
+    },
+    "ferryhopper": {
+      "type": "http",
+      "url": "https://mcp.ferryhopper.com/mcp",
+      "headers": {}
+    },
+    "airbnb": {
+      "command": "npx",
+      "args": ["-y", "@openbnb/mcp-server-airbnb"],
+      "env": {}
+    },
     "scrapebadger": {
       "type": "http",
       "url": "https://mcp.scrapebadger.com/mcp",
       "headers": {
-        "Authorization": "Bearer ${API_KEY}"
+        "Authorization": "Bearer ${scrapebadger-api-key}"
+      }
+    },
+    "twitter-mcp": {
+      "command": "npx",
+      "args": ["-y", "@enescinar/twitter-mcp"],
+      "env": {
+        "API_KEY": "<api_key>",
+        "API_SECRET_KEY": "<api_secret_key>",
+        "ACCESS_TOKEN": "<access_token>",
+        "ACCESS_TOKEN_SECRET": "<access_token_secret>"
       }
     }
   }
