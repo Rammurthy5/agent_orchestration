@@ -12,18 +12,24 @@ class TweetSearchParams(BaseModel):
     """Parameters for tweet search."""
 
     query: str
-    limit: int = 20
+    count: int = 20
+
+    @property
+    def limit(self) -> int:
+        """Backward-compatible alias for older code paths."""
+        return self.count
 
 
 class TweetResult(BaseModel):
     """A single tweet result."""
 
-    tweet_id: str
-    text: str
-    author: str
+    tweet_id: str = ""
+    text: str = ""
+    author: str = ""
     likes: int = 0
     retweets: int = 0
     timestamp: str | None = None
+    url: str | None = None
 
 
 class SentimentResult(BaseModel):
@@ -48,11 +54,11 @@ async def search_tweets(params: TweetSearchParams) -> list[TweetResult]:
     raise NotImplementedError("Must be called through TwitterMCPAdapter")
 
 
-async def analyze_sentiment(tweet_ids: list[str]) -> SentimentResult:
+async def analyze_sentiment(topic: str) -> SentimentResult:
     """Analyze sentiment via MCP adapter. Must be called through adapters/twitter_mcp.py."""
     raise NotImplementedError("Must be called through TwitterMCPAdapter")
 
 
-async def get_trends(location: str) -> list[TrendResult]:
+async def get_trends(topic: str) -> list[TrendResult]:
     """Get trends via MCP adapter. Must be called through adapters/twitter_mcp.py."""
     raise NotImplementedError("Must be called through TwitterMCPAdapter")

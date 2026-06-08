@@ -76,6 +76,17 @@ GROUNDING_CASES = [
         "agent_answer": "#GoogleGemini is the top trending topic with 50K tweets.",
         "expected_grounded": False,
     },
+    {
+        "id": "grounding_009",
+        "agent_id": AgentID.TWITTER,
+        "query": "What are people saying about climate change?",
+        "tool_output": (
+            "Tweet 1: Climate action is finally getting real momentum. "
+            "Tweet 2: #ClimateChange policy talk is everywhere this week."
+        ),
+        "agent_answer": "People are discussing climate action and #ClimateChange policy this week.",
+        "expected_grounded": True,
+    },
 ]
 
 # --- Tool Selection Cases ---
@@ -137,6 +148,13 @@ TOOL_SELECTION_CASES = [
         "expected_tool": "analyze_sentiment",
         "expected_params": {"topic": "climate change"},
     },
+    {
+        "id": "tool_009",
+        "agent_id": AgentID.TWITTER,
+        "query": "Find recent tweets about renewable energy",
+        "expected_tool": "search_tweets",
+        "expected_params": {"query": "renewable energy", "limit": 20},
+    },
 ]
 
 # --- Trajectory Cases ---
@@ -195,6 +213,24 @@ TRAJECTORY_CASES = [
             },
             {
                 "thought": "Ibis Eiffel is closest and cheapest. Good budget option.",
+                "action": None,
+                "observation": None,
+            },
+        ],
+        "expected_min_score": 0.8,
+    },
+    {
+        "id": "traj_004",
+        "agent_id": AgentID.TWITTER,
+        "query": "What are people saying about renewable energy?",
+        "steps": [
+            {
+                "thought": "I should search recent tweets about renewable energy to see what people are saying.",
+                "action": "search_tweets",
+                "observation": "Tweet 1: Renewable energy adoption is accelerating. Tweet 2: Solar and wind are getting cheaper.",
+            },
+            {
+                "thought": "The tweets show growing adoption and lower costs for solar and wind, so I can summarize the trend.",
                 "action": None,
                 "observation": None,
             },

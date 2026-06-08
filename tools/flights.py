@@ -6,7 +6,7 @@ They must remain pure — no direct external API calls.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class FlightSearchParams(BaseModel):
@@ -21,6 +21,8 @@ class FlightSearchParams(BaseModel):
 class FlightResult(BaseModel):
     """A single flight search result."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     airline: str
     origin: str
     destination: str
@@ -29,6 +31,10 @@ class FlightResult(BaseModel):
     duration_minutes: int
     price_usd: float
     stops: int
+    booking_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("booking_url", "url", "bookingLink", "booking_link"),
+    )
 
 
 class RouteComparison(BaseModel):

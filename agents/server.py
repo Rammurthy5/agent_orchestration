@@ -10,6 +10,7 @@ import logging
 import os
 import time
 from concurrent import futures
+from pathlib import Path
 
 import grpc
 from grpc_reflection.v1alpha import reflection
@@ -24,6 +25,8 @@ from agents.twitter import TwitterAgent
 from agents.gen.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 
 logger = logging.getLogger(__name__)
+
+os.environ.setdefault("AGENT_ORCHESTRATION_ROOT", str(Path(__file__).resolve().parent.parent))
 
 
 class AgentServiceServicer(orchestrator_pb2_grpc.AgentServiceServicer):

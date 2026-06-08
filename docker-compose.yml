@@ -34,8 +34,17 @@ services:
       TRAVEL_HACKING_API_KEY: ${TRAVEL_HACKING_API_KEY:-}
       TWITTER_MCP_URL: ${TWITTER_MCP_URL:-}
       TWITTER_MCP_API_KEY: ${TWITTER_MCP_API_KEY:-}
+      TWITTER_API_KEY: ${TWITTER_API_KEY:-}
+      TWITTER_API_SECRET_KEY: ${TWITTER_API_SECRET_KEY:-}
+      TWITTER_ACCESS_TOKEN: ${TWITTER_ACCESS_TOKEN:-}
+      TWITTER_ACCESS_TOKEN_SECRET: ${TWITTER_ACCESS_TOKEN_SECRET:-}
+      AGENT_ORCHESTRATION_ROOT: /app
     ports:
       - "50052:50052"
+    volumes:
+      - ./.vscode:/app/.vscode:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

@@ -53,9 +53,10 @@ def load_mcp_config(workspace_root: str | Path | None = None) -> MCPConfig:
     servers: dict[str, MCPServerConfig] = {}
 
     for name, server_data in raw.get("servers", {}).items():
+        inferred_type = "stdio" if server_data.get("command") else "http"
         servers[name] = MCPServerConfig(
             name=name,
-            type=server_data.get("type", "http"),
+            type=server_data.get("type", inferred_type),
             url=server_data.get("url", ""),
             headers=server_data.get("headers", {}),
             command=server_data.get("command"),
@@ -82,9 +83,16 @@ def get_server_config(server_name: str, workspace_root: str | Path | None = None
 
 def _find_workspace_root() -> Path:
     """Find workspace root by searching up for .vscode/mcp.json."""
-    current = Path.cwd()
-    for parent in [current, *current.parents]:
-        if (parent / ".vscode" / "mcp.json").exists():
-            return parent
+    env_root = os.getenv("AGENT_ORCHESTRATION_ROOT")
+    if env_root:
+        candidate = Path(env_root).expanduser().resolve()
+        if (candidate / ".vscode" / "mcp.json").exists():
+            return candidate
+
+    candidates = [Path.cwd(), Path(__file__).resolve().parent.parent]
+    for start in candidates:
+        for parent in [start, *start.parents]:
+            if (parent / ".vscode" / "mcp.json").exists():
+                return parent
     # Fallback to CWD
-    return current
+    return Path.cwd()

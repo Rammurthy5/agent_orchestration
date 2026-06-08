@@ -75,12 +75,12 @@ class TwitterAgent(BaseAgent):
                 results = await self.adapter.search_tweets(params)
                 observation = json.dumps([r.model_dump() for r in results], default=str)
             elif tool_call.tool_name == "analyze_sentiment":
-                tweet_ids = tool_call.parameters.get("tweet_ids", [])
-                result = await self.adapter.analyze_sentiment(tweet_ids)
+                topic = tool_call.parameters.get("topic", "")
+                result = await self.adapter.analyze_sentiment(topic)
                 observation = result.model_dump_json()
             elif tool_call.tool_name == "get_trends":
-                location = tool_call.parameters.get("location", "")
-                results = await self.adapter.get_trends(location)
+                topic = tool_call.parameters.get("topic", "")
+                results = await self.adapter.get_trends(topic)
                 observation = json.dumps([r.model_dump() for r in results], default=str)
             else:
                 observation = f"Unknown tool: {tool_call.tool_name}"
@@ -114,4 +114,3 @@ class TwitterAgent(BaseAgent):
         )
         response = await self.llm.complete(messages)
         return response.content
-

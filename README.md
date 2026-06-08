@@ -96,8 +96,35 @@ MCP adapters first read server config from `.vscode/mcp.json`. If a server entry
 | `SCRAPE_BADGER_API_KEY` | empty | Marketplace / ScrapeBadger adapter |
 | `TRAVEL_HACKING_MCP_URL` | `http://localhost:8100/mcp` | Flights + Stay adapter |
 | `TRAVEL_HACKING_API_KEY` | empty | Flights + Stay adapter |
-| `TWITTER_MCP_URL` | `http://localhost:8101/mcp` | Twitter adapter |
-| `TWITTER_MCP_API_KEY` | empty | Twitter adapter |
+| `TWITTER_MCP_URL` | `http://localhost:8101/mcp` | Twitter adapter fallback for older HTTP setups |
+| `TWITTER_MCP_API_KEY` | empty | Twitter adapter fallback for older HTTP setups |
+| `TWITTER_API_KEY` | empty | Twitter adapter direct-search fallback |
+| `TWITTER_API_SECRET_KEY` | empty | Twitter adapter direct-search fallback |
+| `TWITTER_ACCESS_TOKEN` | empty | Twitter adapter direct-search fallback |
+| `TWITTER_ACCESS_TOKEN_SECRET` | empty | Twitter adapter direct-search fallback |
+
+The Twitter agent prefers the `twitter-mcp` stdio server defined in `.vscode/mcp.json`:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "@enescinar/twitter-mcp"],
+  "env": {
+    "API_KEY": "...",
+    "API_SECRET_KEY": "...",
+    "ACCESS_TOKEN": "...",
+    "ACCESS_TOKEN_SECRET": "..."
+  }
+}
+```
+
+The travel agents now mirror the toolkit-style split:
+
+- Flights prefers `skiplagged`, then `kiwi`, then the legacy `travel-hacking` fallback.
+- Stay prefers `airbnb`, then `trivago`, then the legacy `travel-hacking` fallback.
+- Ferryhopper is available in the workspace config for future ferry-specific travel work.
+
+Those toolkit servers can be configured directly in `.vscode/mcp.json` using the same pattern as the existing `travel-hacking` entry.
 
 Example local exports:
 
@@ -108,6 +135,10 @@ export LLM_MODEL="gpt-5.4-mini"
 
 # Optional MCP fallback vars (if not using .vscode/mcp.json)
 export SCRAPE_BADGER_API_KEY="<scrapebadger-key>"
+export TWITTER_API_KEY="<twitter-api-key>"
+export TWITTER_API_SECRET_KEY="<twitter-api-secret>"
+export TWITTER_ACCESS_TOKEN="<twitter-access-token>"
+export TWITTER_ACCESS_TOKEN_SECRET="<twitter-access-token-secret>"
 ```
 
 ## Usage
@@ -130,6 +161,9 @@ The orchestrator accepts gRPC requests on `:50051` and forwards them to the agen
 ### Running with Docker Compose
 
 Use Docker Compose to run PostgreSQL (with pgvector), Python agents, and the Go orchestrator together.
+
+Note: the agents image now includes Node.js so it can launch stdio MCP servers such as `airbnb` and `twitter-mcp`. Docker Compose still falls back to the Twitter OAuth credentials directly if the stdio server is unavailable, so the four `TWITTER_*` variables above need to be set in your environment or `.env` before `docker compose up`.
+Docker Compose also mounts `.vscode/` into the agents container so the travel and marketplace agents can read the workspace MCP config at runtime.
 
 ```bash
 # Copy example environment and set secrets (at least LLM_API_KEY)

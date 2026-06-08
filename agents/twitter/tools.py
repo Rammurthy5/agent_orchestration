@@ -6,21 +6,21 @@ AVAILABLE_TOOLS = [
         "description": "Search for tweets matching a query or hashtag",
         "parameters": {
             "query": "Search query or hashtag",
-            "limit": "Maximum number of tweets to return",
+            "count": "Number of tweets to return (10-100)",
         },
     },
     {
         "name": "analyze_sentiment",
-        "description": "Analyze sentiment of a collection of tweets",
+        "description": "Analyze sentiment for a topic using recent tweets",
         "parameters": {
-            "tweet_ids": "List of tweet IDs to analyze",
+            "topic": "Topic or query to analyze",
         },
     },
     {
         "name": "get_trends",
-        "description": "Get current trending topics for a location",
+        "description": "Infer current trending topics for a topic or search query",
         "parameters": {
-            "location": "Location name or WOEID",
+            "topic": "Topic or query to summarize",
         },
     },
 ]

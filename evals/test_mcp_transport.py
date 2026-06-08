@@ -12,6 +12,8 @@ from pydantic import BaseModel
 
 from adapters.base import BaseMCPAdapter, MCPError, MCPSessionError
 from adapters.mcp_config import MCPConfig, MCPServerConfig, load_mcp_config, get_server_config
+from adapters.stdio import BaseMCPStdioAdapter
+from tools.flights import FlightResult, FlightSearchParams
 
 
 def _mock_response(status_code: int, *, json_data: dict | None = None, headers: dict | None = None) -> httpx.Response:
@@ -78,6 +80,30 @@ class TestMCPConfigLoader:
         missing = get_server_config("nonexistent", tmp_path)
         assert missing is None
 
+    def test_find_workspace_root_can_use_explicit_override(self, tmp_path, monkeypatch):
+        """AGENT_ORCHESTRATION_ROOT should win when cwd is unrelated."""
+        workspace_root = tmp_path / "workspace"
+        vscode_dir = workspace_root / ".vscode"
+        vscode_dir.mkdir(parents=True)
+        (vscode_dir / "mcp.json").write_text(json.dumps({
+            "servers": {
+                "twitter-mcp": {
+                    "command": "npx",
+                    "args": ["-y", "@enescinar/twitter-mcp"],
+                    "env": {"API_KEY": "api-key"},
+                }
+            }
+        }))
+
+        monkeypatch.setenv("AGENT_ORCHESTRATION_ROOT", str(workspace_root))
+        (tmp_path / "elsewhere").mkdir()
+        monkeypatch.chdir(tmp_path / "elsewhere")
+
+        config = get_server_config("twitter-mcp")
+        assert config is not None
+        assert config.command == "npx"
+        assert config.env["API_KEY"] == "api-key"
+
 
 class TestMCPServerConfig:
     def test_defaults(self):
@@ -96,6 +122,109 @@ class TestMCPServerConfig:
         )
         assert config.url == "https://mcp.scrapebadger.com/mcp"
         assert "Authorization" in config.headers
+
+
+class TestTravelHackingAdapterConfig:
+    def test_flights_profile_prefers_skiplagged(self):
+        from adapters.travel_hacking import TravelHackingAdapter
+
+        def fake_get_server_config(name: str, workspace_root=None):
+            if name == "skiplagged":
+                return MCPServerConfig(
+                    name="skiplagged",
+                    type="http",
+                    url="https://mcp.skiplagged.com/mcp",
+                )
+            return None
+
+        with patch("adapters.travel_hacking.get_server_config", side_effect=fake_get_server_config):
+            adapter = TravelHackingAdapter(profile="flights")
+
+        assert "skiplagged" in adapter._transports
+        assert adapter._transports["skiplagged"].transport.base_url == "https://mcp.skiplagged.com/mcp"
+
+    def test_stay_profile_prefers_airbnb(self):
+        from adapters.travel_hacking import TravelHackingAdapter
+
+        def fake_get_server_config(name: str, workspace_root=None):
+            if name == "airbnb":
+                return MCPServerConfig(
+                    name="airbnb",
+                    type="stdio",
+                    command="npx",
+                    args=["-y", "@openbnb/mcp-server-airbnb"],
+                )
+            return None
+
+        with patch("adapters.travel_hacking.get_server_config", side_effect=fake_get_server_config):
+            adapter = TravelHackingAdapter(profile="stay")
+
+        assert "airbnb" in adapter._transports
+        assert adapter._transports["airbnb"].transport.command == "npx"
+
+    def test_blank_travel_hacking_env_uses_default_url(self, monkeypatch):
+        from adapters.travel_hacking import TravelHackingAdapter
+
+        monkeypatch.setenv("TRAVEL_HACKING_MCP_URL", "")
+        monkeypatch.setenv("TRAVEL_HACKING_API_KEY", "")
+
+        adapter = TravelHackingAdapter(base_url=None, auth_token=None, profile="stay")
+
+        assert adapter._legacy_transport.base_url == "http://localhost:8100/mcp"
+
+    def test_loopback_travel_hacking_url_rewrites_in_container(self, monkeypatch):
+        from adapters.travel_hacking import TravelHackingAdapter
+
+        monkeypatch.setenv("AGENT_ORCHESTRATION_ROOT", "/app")
+        monkeypatch.setattr("adapters.travel_hacking._running_in_container", lambda: True)
+
+        def fake_get_server_config(name: str, workspace_root=None):
+            if name == "travel-hacking":
+                return MCPServerConfig(
+                    name="travel-hacking",
+                    type="http",
+                    url="http://127.0.0.1:8100/mcp",
+                )
+            return None
+
+        with patch("adapters.travel_hacking.get_server_config", side_effect=fake_get_server_config):
+            adapter = TravelHackingAdapter(profile="stay")
+
+        assert adapter._transports["travel-hacking"].transport.base_url == "http://host.docker.internal:8100/mcp"
+
+    @pytest.mark.asyncio
+    async def test_search_flights_adds_booking_url_when_missing(self):
+        from adapters.travel_hacking import FlightSearchResult, TravelHackingAdapter
+
+        class FakeTransport:
+            async def call(self, method, params, response_model):
+                assert method == "search_flights"
+                return FlightSearchResult(
+                    flights=[
+                        FlightResult(
+                            airline="SkyAir",
+                            origin="JFK",
+                            destination="LAX",
+                            departure_time="2026-07-10T08:00:00Z",
+                            arrival_time="2026-07-10T11:00:00Z",
+                            duration_minutes=360,
+                            price_usd=199.0,
+                            stops=0,
+                        )
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(base_url="http://localhost:8100/mcp", profile="flights")
+        adapter._transports = {}
+        adapter._legacy_transport = FakeTransport()
+
+        results = await adapter.search_flights(FlightSearchParams(origin="JFK", destination="LAX", departure_date="2026-07-10"))
+
+        assert results[0].booking_url is not None
+        assert "google.com/travel/flights" in results[0].booking_url
 
 
 # --- Streamable HTTP Transport Tests ---
@@ -364,3 +493,71 @@ class TestScrapeBadgerConfigLoading:
             adapter = ScrapeBadgerAdapter()
             assert adapter.base_url == "http://custom:9000/mcp"
             assert adapter._auth_token == "env-key"
+
+
+class TestTwitterMCPConfigLoading:
+    def test_loads_stdio_server_from_workspace(self, tmp_path):
+        """Twitter adapter should prefer the twitter-mcp stdio server in mcp.json."""
+        vscode_dir = tmp_path / ".vscode"
+        vscode_dir.mkdir()
+        (vscode_dir / "mcp.json").write_text(json.dumps({
+            "servers": {
+                "twitter-mcp": {
+                    "command": "npx",
+                    "args": ["-y", "@enescinar/twitter-mcp"],
+                    "env": {
+                        "API_KEY": "api-key",
+                        "API_SECRET_KEY": "api-secret",
+                        "ACCESS_TOKEN": "access-token",
+                        "ACCESS_TOKEN_SECRET": "access-secret",
+                    },
+                }
+            }
+        }))
+
+        config = get_server_config("twitter-mcp", tmp_path)
+        assert config is not None
+        assert config.type == "stdio"
+        assert config.command == "npx"
+        assert config.args == ["-y", "@enescinar/twitter-mcp"]
+
+    def test_twitter_adapter_uses_stdio_transport(self):
+        """TwitterMCPAdapter should initialize from the twitter-mcp stdio config."""
+        from adapters.twitter_mcp import TwitterMCPAdapter
+
+        with patch("adapters.twitter_mcp.get_server_config") as mock_config:
+            mock_config.side_effect = lambda name, workspace_root=None: (
+                MCPServerConfig(
+                    name="twitter-mcp",
+                    type="stdio",
+                    command="npx",
+                    args=["-y", "@enescinar/twitter-mcp"],
+                    env={
+                        "API_KEY": "api-key",
+                        "API_SECRET_KEY": "api-secret",
+                        "ACCESS_TOKEN": "access-token",
+                        "ACCESS_TOKEN_SECRET": "access-secret",
+                    },
+                )
+                if name == "twitter-mcp"
+                else None
+            )
+
+            adapter = TwitterMCPAdapter()
+
+            assert mock_config.call_args_list[0].args[0] == "twitter-mcp"
+            assert isinstance(adapter._transport, BaseMCPStdioAdapter)
+            assert adapter._transport.command == "npx"
+            assert adapter._transport.args == ["-y", "@enescinar/twitter-mcp"]
+            assert adapter._transport.env["API_KEY"] == "api-key"
+
+    def test_stdio_frame_round_trip(self):
+        """Frame encoding and parsing should round-trip JSON-RPC payloads."""
+        payload = {"jsonrpc": "2.0", "id": 7, "result": {"ok": True}}
+        frame = BaseMCPStdioAdapter.encode_frame(payload)
+        adapter = BaseMCPStdioAdapter(command="npx")
+        adapter._read_buffer = bytearray(frame)
+
+        parsed = adapter._try_parse_message()
+        assert parsed == payload
+        assert adapter._read_buffer == bytearray()
