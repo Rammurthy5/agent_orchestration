@@ -87,7 +87,8 @@ The following metrics were computed from the local eval artifact [evals/results/
 
 ### Data Sources
 
-- Flights/Stay via travel MCP providers
+- Flights via Kiwi and Skiplagged MCP providers
+- Stay via Skiplagged and trivago MCP providers
 - Marketplace via ScrapeBadger MCP
 - Twitter via Twitter MCP transport
 - Internal persistence via PostgreSQL + PgVector (conversations, memory, tool calls, eval records)
