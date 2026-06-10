@@ -74,4 +74,5 @@ async def test_flights_agent_appends_search_link_on_tool_error() -> None:
 
     assert response.tool_calls
     assert "Live flight search was unavailable" in response.answer
+    assert "boom" in response.answer
     assert "Search link:" in response.answer

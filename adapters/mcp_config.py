@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,12 +33,15 @@ class MCPConfig(BaseModel):
     servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+_ENV_PATTERN = re.compile(r"\$\{([^}:]+)(?::-(.*?))?\}")
+
+
 def load_mcp_config(workspace_root: str | Path | None = None) -> MCPConfig:
-    """Load MCP server configuration from .vscode/mcp.json.
+    """Load MCP server configuration from .vscode/mcp.json or .mcp.json.
 
     Args:
         workspace_root: Path to the workspace root. Defaults to searching
-                       up from CWD for a .vscode/mcp.json file.
+                       up from CWD for a toolkit-style MCP config file.
 
     Returns:
         Parsed MCPConfig with server connection details.
@@ -45,14 +49,15 @@ def load_mcp_config(workspace_root: str | Path | None = None) -> MCPConfig:
     if workspace_root is None:
         workspace_root = _find_workspace_root()
 
-    config_path = Path(workspace_root) / ".vscode" / "mcp.json"
+    config_path = _find_config_path(Path(workspace_root))
     if not config_path.exists():
         return MCPConfig()
 
     raw = json.loads(config_path.read_text())
     servers: dict[str, MCPServerConfig] = {}
 
-    for name, server_data in raw.get("servers", {}).items():
+    for name, server_data in _server_blocks(raw).items():
+        server_data = _expand_value(server_data)
         inferred_type = "stdio" if server_data.get("command") else "http"
         servers[name] = MCPServerConfig(
             name=name,
@@ -82,17 +87,56 @@ def get_server_config(server_name: str, workspace_root: str | Path | None = None
 
 
 def _find_workspace_root() -> Path:
-    """Find workspace root by searching up for .vscode/mcp.json."""
+    """Find workspace root by searching up for a supported MCP config file."""
     env_root = os.getenv("AGENT_ORCHESTRATION_ROOT")
     if env_root:
         candidate = Path(env_root).expanduser().resolve()
-        if (candidate / ".vscode" / "mcp.json").exists():
+        if _find_config_path(candidate).exists():
             return candidate
 
     candidates = [Path.cwd(), Path(__file__).resolve().parent.parent]
     for start in candidates:
         for parent in [start, *start.parents]:
-            if (parent / ".vscode" / "mcp.json").exists():
+            if _find_config_path(parent).exists():
                 return parent
     # Fallback to CWD
     return Path.cwd()
+
+
+def _find_config_path(workspace_root: Path) -> Path:
+    for relative in (".vscode/mcp.json", ".mcp.json", "_mcp.json"):
+        candidate = workspace_root / relative
+        if candidate.exists():
+            return candidate
+    return workspace_root / ".vscode" / "mcp.json"
+
+
+def _server_blocks(raw: dict[str, Any]) -> dict[str, Any]:
+    servers = raw.get("servers")
+    if isinstance(servers, dict):
+        return servers
+
+    mcp_servers = raw.get("mcpServers")
+    if isinstance(mcp_servers, dict):
+        return mcp_servers
+
+    return {}
+
+
+def _expand_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _expand_string(value)
+    if isinstance(value, list):
+        return [_expand_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _expand_value(item) for key, item in value.items()}
+    return value
+
+
+def _expand_string(value: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        default = match.group(2) or ""
+        return os.getenv(name, default)
+
+    return _ENV_PATTERN.sub(replace, value)

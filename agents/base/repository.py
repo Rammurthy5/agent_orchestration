@@ -14,6 +14,8 @@ import asyncpg
 from langsmith import traceable
 from pydantic import BaseModel, Field
 
+from agents.base.safety import redact_text, redact_value
+
 
 class ToolCallRecord(BaseModel):
     """A tool execution record."""
@@ -50,22 +52,29 @@ class ToolCallRepository:
     @traceable(name="repo.store_tool_call")
     async def store(self, record: ToolCallRecord) -> str:
         """Store a tool call record."""
+        safe_record = record.model_copy(
+            update={
+                "params": redact_value(record.params),
+                "result": redact_value(record.result) if record.result is not None else None,
+                "error": redact_text(record.error) if record.error is not None else None,
+            }
+        )
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO tool_calls (id, conversation_id, tool_name, params, result, error, success, latency_ms)
                 VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8)
                 """,
-                record.id,
-                record.conversation_id,
-                record.tool_name,
-                json.dumps(record.params),
-                json.dumps(record.result) if record.result else None,
-                record.error,
-                record.success,
-                record.latency_ms,
+                safe_record.id,
+                safe_record.conversation_id,
+                safe_record.tool_name,
+                json.dumps(safe_record.params),
+                json.dumps(safe_record.result) if safe_record.result else None,
+                safe_record.error,
+                safe_record.success,
+                safe_record.latency_ms,
             )
-        return record.id
+        return safe_record.id
 
     @traceable(name="repo.get_tool_calls_by_conversation")
     async def get_by_conversation(self, conversation_id: str) -> list[ToolCallRecord]:
@@ -135,22 +144,30 @@ class EvalRepository:
     @traceable(name="repo.store_eval")
     async def store(self, record: EvalRecord) -> str:
         """Store an evaluation result."""
+        safe_record = record.model_copy(
+            update={
+                "input": redact_text(record.input),
+                "expected": redact_text(record.expected) if record.expected is not None else None,
+                "actual": redact_text(record.actual) if record.actual is not None else None,
+                "metadata": redact_value(record.metadata),
+            }
+        )
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO eval_results (id, eval_type, agent_id, input, expected, actual, score, metadata)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
                 """,
-                record.id,
-                record.eval_type,
-                record.agent_id,
-                record.input,
-                record.expected,
-                record.actual,
-                record.score,
-                json.dumps(record.metadata),
+                safe_record.id,
+                safe_record.eval_type,
+                safe_record.agent_id,
+                safe_record.input,
+                safe_record.expected,
+                safe_record.actual,
+                safe_record.score,
+                json.dumps(safe_record.metadata),
             )
-        return record.id
+        return safe_record.id
 
     @traceable(name="repo.get_evals_by_agent")
     async def get_by_agent(self, agent_id: str, limit: int = 50) -> list[EvalRecord]:

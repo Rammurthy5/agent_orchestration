@@ -30,8 +30,6 @@ services:
       LLM_MODEL: ${LLM_MODEL:-gpt-5.4-mini}
       SCRAPE_BADGER_MCP_URL: ${SCRAPE_BADGER_MCP_URL:-}
       SCRAPE_BADGER_API_KEY: ${SCRAPE_BADGER_API_KEY:-}
-      TRAVEL_HACKING_MCP_URL: ${TRAVEL_HACKING_MCP_URL:-}
-      TRAVEL_HACKING_API_KEY: ${TRAVEL_HACKING_API_KEY:-}
       TWITTER_MCP_URL: ${TWITTER_MCP_URL:-}
       TWITTER_MCP_API_KEY: ${TWITTER_MCP_API_KEY:-}
       TWITTER_API_KEY: ${TWITTER_API_KEY:-}
@@ -43,6 +41,8 @@ services:
       - "50052:50052"
     volumes:
       - ./.vscode:/app/.vscode:ro
+      - ./.mcp.json:/app/.mcp.json:ro
+      - ./_mcp.json:/app/_mcp.json:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

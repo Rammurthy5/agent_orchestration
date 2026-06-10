@@ -7,12 +7,14 @@ against criteria like grounding, relevance, and correctness.
 from __future__ import annotations
 
 import json
+import hashlib
 from typing import Any
 
 from langsmith import traceable
 from pydantic import BaseModel, Field
 
 from agents.base.llm import LLMClient, Message
+from agents.base.safety import redact_text
 
 
 class JudgeScore(BaseModel):
@@ -22,6 +24,7 @@ class JudgeScore(BaseModel):
     reasoning: str
     criteria: str
     passed: bool = False
+    usage: dict[str, Any] | None = None
 
 
 class GroundingVerdict(BaseModel):
@@ -31,6 +34,7 @@ class GroundingVerdict(BaseModel):
     score: float = Field(ge=0.0, le=1.0)
     unsupported_claims: list[str] = Field(default_factory=list)
     reasoning: str
+    usage: dict[str, Any] | None = None
 
 
 class ToolSelectionVerdict(BaseModel):
@@ -40,6 +44,7 @@ class ToolSelectionVerdict(BaseModel):
     correct_params: bool
     score: float = Field(ge=0.0, le=1.0)
     reasoning: str
+    usage: dict[str, Any] | None = None
 
 
 class TrajectoryVerdict(BaseModel):
@@ -50,6 +55,7 @@ class TrajectoryVerdict(BaseModel):
     observation_usage: float = Field(ge=0.0, le=1.0)
     overall_score: float = Field(ge=0.0, le=1.0)
     reasoning: str
+    usage: dict[str, Any] | None = None
 
 
 _GROUNDING_PROMPT = """You are an evaluation judge. Determine if the agent's answer is grounded in the provided tool output.
@@ -139,9 +145,23 @@ class LLMJudge:
 
     def __init__(self, llm: LLMClient | None = None):
         self._llm = llm or LLMClient()
+        self._cache: dict[tuple[str, str], dict[str, Any]] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
 
     async def close(self) -> None:
         await self._llm.close()
+
+    @property
+    def cache_hits(self) -> int:
+        return self._cache_hits
+
+    @property
+    def cache_misses(self) -> int:
+        return self._cache_misses
+
+    def cache_stats(self) -> dict[str, int]:
+        return {"hits": self._cache_hits, "misses": self._cache_misses}
 
     @traceable(name="judge.grounding")
     async def check_grounding(
@@ -149,12 +169,10 @@ class LLMJudge:
     ) -> GroundingVerdict:
         """Check if agent answer is grounded in tool output (hallucination detection)."""
         prompt = _GROUNDING_PROMPT.format(
-            tool_output=tool_output, agent_answer=agent_answer
+            tool_output=redact_text(tool_output), agent_answer=redact_text(agent_answer)
         )
-        response = await self._llm.complete(
-            messages=[Message(role="user", content=prompt)], temperature=0.0
-        )
-        return GroundingVerdict(**_parse_json(response.content))
+        payload = await self._complete_json("grounding", prompt)
+        return GroundingVerdict(**payload)
 
     @traceable(name="judge.tool_selection")
     async def check_tool_selection(
@@ -167,16 +185,14 @@ class LLMJudge:
     ) -> ToolSelectionVerdict:
         """Evaluate if the agent selected the correct tool with correct parameters."""
         prompt = _TOOL_SELECTION_PROMPT.format(
-            query=query,
+            query=redact_text(query),
             expected_tool=expected_tool,
-            expected_params=json.dumps(expected_params),
+            expected_params=json.dumps(expected_params, default=str),
             actual_tool=actual_tool,
-            actual_params=json.dumps(actual_params),
+            actual_params=json.dumps(actual_params, default=str),
         )
-        response = await self._llm.complete(
-            messages=[Message(role="user", content=prompt)], temperature=0.0
-        )
-        return ToolSelectionVerdict(**_parse_json(response.content))
+        payload = await self._complete_json("tool_selection", prompt)
+        return ToolSelectionVerdict(**payload)
 
     @traceable(name="judge.trajectory")
     async def evaluate_trajectory(
@@ -184,23 +200,35 @@ class LLMJudge:
     ) -> TrajectoryVerdict:
         """Evaluate the quality of a ReAct reasoning trajectory."""
         trajectory_text = "\n".join(
-            f"Step {i+1}:\n  Thought: {s.get('thought', 'N/A')}\n  Action: {s.get('action', 'N/A')}\n  Observation: {s.get('observation', 'N/A')}"
+            f"Step {i+1}:\n  Thought: {redact_text(s.get('thought', 'N/A'))}\n  Action: {redact_text(s.get('action', 'N/A'))}\n  Observation: {redact_text(s.get('observation', 'N/A'))}"
             for i, s in enumerate(steps)
         )
-        prompt = _TRAJECTORY_PROMPT.format(query=query, trajectory=trajectory_text)
-        response = await self._llm.complete(
-            messages=[Message(role="user", content=prompt)], temperature=0.0
-        )
-        return TrajectoryVerdict(**_parse_json(response.content))
+        prompt = _TRAJECTORY_PROMPT.format(query=redact_text(query), trajectory=trajectory_text)
+        payload = await self._complete_json("trajectory", prompt)
+        return TrajectoryVerdict(**payload)
 
     @traceable(name="judge.relevance")
     async def score_relevance(self, query: str, answer: str) -> JudgeScore:
         """Score the relevance and helpfulness of an agent answer."""
-        prompt = _RELEVANCE_PROMPT.format(query=query, answer=answer)
+        prompt = _RELEVANCE_PROMPT.format(query=redact_text(query), answer=redact_text(answer))
+        payload = await self._complete_json("relevance", prompt)
+        return JudgeScore(**payload)
+
+    async def _complete_json(self, namespace: str, prompt: str) -> dict[str, Any]:
+        cache_key = (namespace, _prompt_fingerprint(prompt))
+        if cache_key in self._cache:
+            self._cache_hits += 1
+            return self._cache[cache_key]
+
+        self._cache_misses += 1
         response = await self._llm.complete(
             messages=[Message(role="user", content=prompt)], temperature=0.0
         )
-        return JudgeScore(**_parse_json(response.content))
+        payload = _parse_json(response.content)
+        if response.usage is not None:
+            payload["usage"] = response.usage
+        self._cache[cache_key] = payload
+        return payload
 
 
 def _parse_json(text: str) -> dict[str, Any]:
@@ -212,3 +240,7 @@ def _parse_json(text: str) -> dict[str, Any]:
         text = "\n".join(lines[1:-1]) if len(lines) > 2 else text
         text = text.strip()
     return json.loads(text)
+
+
+def _prompt_fingerprint(prompt: str) -> str:
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()

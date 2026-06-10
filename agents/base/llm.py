@@ -35,6 +35,7 @@ class LLMResponse(BaseModel):
 
     content: str
     tool_call: LLMToolCall | None = None
+    usage: dict[str, Any] | None = None
 
 
 class LLMToolCall(BaseModel):
@@ -120,6 +121,7 @@ class LLMClient:
         return LLMResponse(
             content=message.get("content") or "",
             tool_call=tool_call,
+            usage=data.get("usage"),
         )
 
     def _normalize_tool_schema(self, parameters: dict[str, Any]) -> dict[str, Any]:

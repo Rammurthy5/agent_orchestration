@@ -14,6 +14,7 @@ from adapters.base import BaseMCPAdapter, MCPError, MCPSessionError
 from adapters.mcp_config import MCPConfig, MCPServerConfig, load_mcp_config, get_server_config
 from adapters.stdio import BaseMCPStdioAdapter
 from tools.flights import FlightResult, FlightSearchParams
+from tools.stay import HotelSearchParams
 
 
 def _mock_response(status_code: int, *, json_data: dict | None = None, headers: dict | None = None) -> httpx.Response:
@@ -58,6 +59,40 @@ class TestMCPConfigLoader:
         assert config.servers["local-server"].type == "stdio"
         assert config.servers["local-server"].command == "node"
 
+    def test_load_toolkit_style_mcp_json(self, tmp_path, monkeypatch):
+        """Load toolkit-style .mcp.json using mcpServers and env interpolation."""
+        workspace_root = tmp_path / "workspace"
+        workspace_root.mkdir()
+        (workspace_root / ".mcp.json").write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "local-server": {
+                            "command": "npx",
+                            "args": ["-y", "example-server"],
+                            "env": {},
+                        },
+                        "liteapi": {
+                            "type": "http",
+                            "url": "https://mcp.liteapi.travel/api/mcp",
+                            "headers": {
+                                "Authorization": "Bearer ${LITEAPI_API_KEY:-unset}",
+                            },
+                        },
+                    }
+                }
+            )
+        )
+
+        monkeypatch.setenv("LITEAPI_API_KEY", "live-key")
+
+        config = load_mcp_config(workspace_root)
+
+        assert "local-server" in config.servers
+        assert config.servers["local-server"].type == "stdio"
+        assert config.servers["local-server"].args[-1] == "example-server"
+        assert config.servers["liteapi"].headers["Authorization"] == "Bearer live-key"
+
     def test_missing_config_returns_empty(self, tmp_path):
         """Missing mcp.json returns empty config."""
         config = load_mcp_config(tmp_path)
@@ -83,9 +118,8 @@ class TestMCPConfigLoader:
     def test_find_workspace_root_can_use_explicit_override(self, tmp_path, monkeypatch):
         """AGENT_ORCHESTRATION_ROOT should win when cwd is unrelated."""
         workspace_root = tmp_path / "workspace"
-        vscode_dir = workspace_root / ".vscode"
-        vscode_dir.mkdir(parents=True)
-        (vscode_dir / "mcp.json").write_text(json.dumps({
+        workspace_root.mkdir(parents=True)
+        (workspace_root / ".mcp.json").write_text(json.dumps({
             "servers": {
                 "twitter-mcp": {
                     "command": "npx",
@@ -124,11 +158,17 @@ class TestMCPServerConfig:
         assert "Authorization" in config.headers
 
 
-class TestTravelHackingAdapterConfig:
-    def test_flights_profile_prefers_skiplagged(self):
+class TestTravelAdapterConfig:
+    def test_flights_profile_prefers_kiwi_then_skiplagged(self):
         from adapters.travel_hacking import TravelHackingAdapter
 
         def fake_get_server_config(name: str, workspace_root=None):
+            if name == "kiwi":
+                return MCPServerConfig(
+                    name="kiwi",
+                    type="http",
+                    url="https://mcp.kiwi.com",
+                )
             if name == "skiplagged":
                 return MCPServerConfig(
                     name="skiplagged",
@@ -140,65 +180,58 @@ class TestTravelHackingAdapterConfig:
         with patch("adapters.travel_hacking.get_server_config", side_effect=fake_get_server_config):
             adapter = TravelHackingAdapter(profile="flights")
 
-        assert "skiplagged" in adapter._transports
+        assert list(adapter._transports.keys()) == ["kiwi", "skiplagged"]
+        assert adapter._transports["kiwi"].transport.base_url == "https://mcp.kiwi.com"
         assert adapter._transports["skiplagged"].transport.base_url == "https://mcp.skiplagged.com/mcp"
 
-    def test_stay_profile_prefers_airbnb(self):
+    def test_stay_profile_prefers_trivago_then_skiplagged(self):
         from adapters.travel_hacking import TravelHackingAdapter
 
         def fake_get_server_config(name: str, workspace_root=None):
-            if name == "airbnb":
+            if name == "trivago":
                 return MCPServerConfig(
-                    name="airbnb",
-                    type="stdio",
-                    command="npx",
-                    args=["-y", "@openbnb/mcp-server-airbnb"],
-                )
-            return None
-
-        with patch("adapters.travel_hacking.get_server_config", side_effect=fake_get_server_config):
-            adapter = TravelHackingAdapter(profile="stay")
-
-        assert "airbnb" in adapter._transports
-        assert adapter._transports["airbnb"].transport.command == "npx"
-
-    def test_blank_travel_hacking_env_uses_default_url(self, monkeypatch):
-        from adapters.travel_hacking import TravelHackingAdapter
-
-        monkeypatch.setenv("TRAVEL_HACKING_MCP_URL", "")
-        monkeypatch.setenv("TRAVEL_HACKING_API_KEY", "")
-
-        adapter = TravelHackingAdapter(base_url=None, auth_token=None, profile="stay")
-
-        assert adapter._legacy_transport.base_url == "http://localhost:8100/mcp"
-
-    def test_loopback_travel_hacking_url_rewrites_in_container(self, monkeypatch):
-        from adapters.travel_hacking import TravelHackingAdapter
-
-        monkeypatch.setenv("AGENT_ORCHESTRATION_ROOT", "/app")
-        monkeypatch.setattr("adapters.travel_hacking._running_in_container", lambda: True)
-
-        def fake_get_server_config(name: str, workspace_root=None):
-            if name == "travel-hacking":
-                return MCPServerConfig(
-                    name="travel-hacking",
+                    name="trivago",
                     type="http",
-                    url="http://127.0.0.1:8100/mcp",
+                    url="https://mcp.trivago.com/mcp",
+                )
+            if name == "skiplagged":
+                return MCPServerConfig(
+                    name="skiplagged",
+                    type="http",
+                    url="https://mcp.skiplagged.com/mcp",
                 )
             return None
 
         with patch("adapters.travel_hacking.get_server_config", side_effect=fake_get_server_config):
             adapter = TravelHackingAdapter(profile="stay")
 
-        assert adapter._transports["travel-hacking"].transport.base_url == "http://host.docker.internal:8100/mcp"
+        assert list(adapter._transports.keys()) == ["trivago", "skiplagged"]
+        assert adapter._transports["trivago"].transport.base_url == "https://mcp.trivago.com/mcp"
+        assert adapter._transports["skiplagged"].transport.base_url == "https://mcp.skiplagged.com/mcp"
 
     @pytest.mark.asyncio
     async def test_search_flights_adds_booking_url_when_missing(self):
-        from adapters.travel_hacking import FlightSearchResult, TravelHackingAdapter
+        from adapters.travel_hacking import FlightSearchResult, TravelHackingAdapter, _TransportEntry
 
         class FakeTransport:
+            def __init__(self):
+                self.calls: list[dict[str, object]] = []
+
+            async def list_tools(self):
+                return [
+                    {
+                        "name": "search-flight",
+                        "description": "Search flights between airports",
+                    }
+                ]
+
             async def call(self, method, params, response_model):
-                assert method == "search_flights"
+                assert method == "search-flight"
+                payload = params.model_dump()
+                self.calls.append(payload)
+                assert payload["flyFrom"] == "JFK"
+                assert payload["flyTo"] == "LAX"
+                assert payload["departureDate"] == "10/07/2026"
                 return FlightSearchResult(
                     flights=[
                         FlightResult(
@@ -217,14 +250,692 @@ class TestTravelHackingAdapterConfig:
             async def close(self):
                 return None
 
-        adapter = TravelHackingAdapter(base_url="http://localhost:8100/mcp", profile="flights")
-        adapter._transports = {}
-        adapter._legacy_transport = FakeTransport()
+        transport = FakeTransport()
+        adapter = TravelHackingAdapter(profile="flights")
+        adapter._transports = {
+            "kiwi": _TransportEntry(name="kiwi", transport=transport),
+        }
 
         results = await adapter.search_flights(FlightSearchParams(origin="JFK", destination="LAX", departure_date="2026-07-10"))
 
         assert results[0].booking_url is not None
         assert "google.com/travel/flights" in results[0].booking_url
+        assert transport.calls[0]["flyFrom"] == "JFK"
+        assert transport.calls[0]["flyTo"] == "LAX"
+        assert transport.calls[0]["departureDate"] == "10/07/2026"
+
+    @pytest.mark.asyncio
+    async def test_search_flights_uses_skiplagged_tool_shape(self):
+        from adapters.travel_hacking import FlightSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class FakeTransport:
+            async def list_tools(self):
+                return [
+                    {
+                        "name": "sk_flights_search",
+                        "description": "Search flights on Skiplagged",
+                    }
+                ]
+
+            async def call(self, method, params, response_model):
+                assert method == "sk_flights_search"
+                payload = params.model_dump()
+                assert payload["origin"] == "LHR"
+                assert payload["destination"] == "CDG"
+                assert payload["departureDate"] == "2026-07-15"
+                assert payload["limit"] == 3
+                assert payload["sort"] == "price"
+                return FlightSearchResult(
+                    flights=[
+                        FlightResult(
+                            airline="SkyAir",
+                            origin="LHR",
+                            destination="CDG",
+                            departure_time="2026-07-15T08:00:00Z",
+                            arrival_time="2026-07-15T09:00:00Z",
+                            duration_minutes=60,
+                            price_usd=99.0,
+                            stops=0,
+                        )
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="flights")
+        adapter._transports = {
+            "skiplagged": _TransportEntry(name="skiplagged", transport=FakeTransport()),
+        }
+
+        results = await adapter.search_flights(
+            FlightSearchParams(origin="LHR", destination="CDG", departure_date="2026-07-15")
+        )
+
+        assert results[0].booking_url is not None
+        assert "google.com/travel/flights" in results[0].booking_url
+
+    @pytest.mark.asyncio
+    async def test_search_flights_retries_alias_when_primary_tool_is_missing(self):
+        from adapters.travel_hacking import FlightSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class AliasTransport:
+            def __init__(self):
+                self.calls: list[str] = []
+
+            async def list_tools(self):
+                return []
+
+            async def call(self, method, params, response_model):
+                self.calls.append(method)
+                assert method == "search-flight"
+                return FlightSearchResult(
+                    flights=[
+                        FlightResult(
+                            airline="SkyAir",
+                            origin="JFK",
+                            destination="LAX",
+                            departure_time="2026-07-10T08:00:00Z",
+                            arrival_time="2026-07-10T11:00:00Z",
+                            duration_minutes=360,
+                            price_usd=199.0,
+                            stops=0,
+                        )
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        transport = AliasTransport()
+        adapter = TravelHackingAdapter(profile="flights")
+        adapter._transports = {
+            "kiwi": _TransportEntry(name="kiwi", transport=transport),
+        }
+
+        results = await adapter.search_flights(
+            FlightSearchParams(origin="JFK", destination="LAX", departure_date="2026-07-10")
+        )
+
+        assert transport.calls[0] == "search-flight"
+        assert "search_flights" not in transport.calls
+        assert results[0].booking_url is not None
+
+    @pytest.mark.asyncio
+    async def test_search_flights_skips_bad_logical_name_fallbacks(self):
+        from adapters.travel_hacking import FlightSearchResult, KiwiFlightSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class AliasTransport:
+            def __init__(self):
+                self.calls: list[str] = []
+
+            async def list_tools(self):
+                raise RuntimeError("tools/list unavailable")
+
+            async def call(self, method, params, response_model):
+                self.calls.append(method)
+                if method not in {"search-flight", "sk_flights_search"}:
+                    raise AssertionError(f"unexpected method {method}")
+                if response_model is KiwiFlightSearchResult:
+                    return response_model.model_validate(
+                        [
+                            {
+                                "flyFrom": "JFK",
+                                "flyTo": "LAX",
+                                "departure": {"local": "2026-07-10T06:00:00-04:00"},
+                                "arrival": {"local": "2026-07-10T08:49:00-07:00"},
+                                "durationInSeconds": 20940,
+                                "price": 227,
+                                "deepLink": "https://on.kiwi.com/example",
+                            }
+                        ]
+                    )
+                return FlightSearchResult(
+                    flights=[
+                        FlightResult(
+                            airline="SkyAir",
+                            origin="JFK",
+                            destination="LAX",
+                            departure_time="2026-07-10T08:00:00Z",
+                            arrival_time="2026-07-10T11:00:00Z",
+                            duration_minutes=360,
+                            price_usd=199.0,
+                            stops=0,
+                        )
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="flights")
+        adapter._transports = {
+            "kiwi": _TransportEntry(name="kiwi", transport=AliasTransport()),
+            "skiplagged": _TransportEntry(name="skiplagged", transport=AliasTransport()),
+        }
+
+        results = await adapter.search_flights(
+            FlightSearchParams(origin="JFK", destination="LAX", departure_date="2026-07-10")
+        )
+
+        assert results
+
+    @pytest.mark.asyncio
+    async def test_search_flights_normalizes_kiwi_raw_list_response(self):
+        from adapters.travel_hacking import KiwiFlightSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class FakeTransport:
+            async def list_tools(self):
+                return [{"name": "search-flight", "description": "Search flights"}]
+
+            async def call(self, method, params, response_model):
+                assert method == "search-flight"
+                assert response_model is KiwiFlightSearchResult
+                return response_model.model_validate(
+                    [
+                        {
+                            "flyFrom": "JFK",
+                            "flyTo": "LAX",
+                            "departure": {"local": "2026-07-10T06:00:00-04:00"},
+                            "arrival": {"local": "2026-07-10T08:49:00-07:00"},
+                            "durationInSeconds": 20940,
+                            "price": 227,
+                            "deepLink": "https://on.kiwi.com/example",
+                        }
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="flights")
+        adapter._transports = {
+            "kiwi": _TransportEntry(name="kiwi", transport=FakeTransport()),
+        }
+
+        results = await adapter.search_flights(
+            FlightSearchParams(origin="JFK", destination="LAX", departure_date="2026-07-10")
+        )
+
+        assert len(results) == 1
+        assert results[0].origin == "JFK"
+        assert results[0].destination == "LAX"
+        assert results[0].price_usd == 227
+        assert results[0].booking_url == "https://on.kiwi.com/example"
+
+    @pytest.mark.asyncio
+    async def test_search_flights_parses_markdown_text_results(self):
+        from adapters.travel_hacking import FlightSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class FakeTransport:
+            async def list_tools(self):
+                return [{"name": "sk_flights_search", "description": "Search flights"}]
+
+            async def call(self, method, params, response_model):
+                assert method == "sk_flights_search"
+                return response_model.model_validate(
+                    {
+                        "text": (
+                            "# Flight search results (JFK → LAX)\n\n"
+                            "| Price | Duration | Stops | Type | Airlines | Segments | Booking |\n"
+                            "| --- | --- | --- | --- | --- | --- | --- |\n"
+                            "| $179 | 5h 55m | Nonstop | — | Delta Air Lines | "
+                            "Outbound:<br/>JFK → LAX (2026-07-10 07:00:00-04:00 → 2026-07-10 09:55:00-07:00) | "
+                            "[Book](https://skiplagged.com/flights/JFK/LAX/2026-07-10#trip=DL742) |\n"
+                        )
+                    }
+                )
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="flights")
+        adapter._transports = {
+            "skiplagged": _TransportEntry(name="skiplagged", transport=FakeTransport()),
+        }
+
+        results = await adapter.search_flights(
+            FlightSearchParams(origin="JFK", destination="LAX", departure_date="2026-07-10")
+        )
+
+        assert len(results) == 1
+        assert results[0].airline == "Delta Air Lines"
+        assert results[0].price_usd == 179
+        assert results[0].duration_minutes == 355
+        assert results[0].booking_url == "https://skiplagged.com/flights/JFK/LAX/2026-07-10#trip=DL742"
+
+    @pytest.mark.asyncio
+    async def test_search_hotels_resolves_generic_remote_tool_name(self):
+        from adapters.travel_hacking import HotelSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class FakeTransport:
+            async def list_tools(self):
+                return [
+                    {
+                        "name": "search",
+                        "description": "Find hotel rooms and accommodations",
+                    }
+                ]
+
+            async def call(self, method, params, response_model):
+                assert method == "search"
+                return HotelSearchResult(
+                    hotels=[
+                        {
+                            "hotel_id": "h1",
+                            "name": "Hotel One",
+                            "location": "Munich",
+                            "price_per_night_usd": 250,
+                            "rating": 4.5,
+                        }
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="stay")
+        adapter._transports = {
+            "trivago": _TransportEntry(name="trivago", transport=FakeTransport()),
+        }
+
+        results = await adapter.search_hotels(
+            HotelSearchParams(
+                location="Munich",
+                check_in="2026-06-12",
+                check_out="2026-06-13",
+                guests=2,
+            )
+        )
+
+        assert len(results) == 1
+        assert results[0].name == "Hotel One"
+        assert results[0].booking_url is None
+
+    @pytest.mark.asyncio
+    async def test_search_hotels_retries_parameter_variants_when_primary_shape_is_invalid(self):
+        from adapters.travel_hacking import HotelSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class ShapeAwareTransport:
+            def __init__(self):
+                self.calls: list[dict[str, object]] = []
+
+            async def list_tools(self):
+                return [{"name": "search", "description": "Find hotels"}]
+
+            async def call(self, method, params, response_model):
+                assert method == "search"
+                payload = params.model_dump()
+                self.calls.append(payload)
+                if "destination" not in payload:
+                    raise RuntimeError("MCP error -32602: Invalid arguments for tool search")
+                return HotelSearchResult(
+                    hotels=[
+                        {
+                            "hotel_id": "h1",
+                            "name": "Hotel One",
+                            "location": "London",
+                            "price_per_night_usd": 180,
+                            "rating": 4.2,
+                        }
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        transport = ShapeAwareTransport()
+        adapter = TravelHackingAdapter(profile="stay")
+        adapter._transports = {
+            "trivago": _TransportEntry(name="trivago", transport=transport),
+        }
+
+        results = await adapter.search_hotels(
+            HotelSearchParams(
+                location="London",
+                check_in="2026-06-10",
+                check_out="2026-06-12",
+                guests=2,
+            )
+        )
+
+        assert len(transport.calls) >= 2
+        assert any("destination" in call for call in transport.calls)
+        assert results[0].name == "Hotel One"
+
+    @pytest.mark.asyncio
+    async def test_search_hotels_retries_alias_when_primary_tool_is_missing(self):
+        from adapters.travel_hacking import HotelSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class AliasTransport:
+            def __init__(self):
+                self.calls: list[str] = []
+
+            async def list_tools(self):
+                return []
+
+            async def call(self, method, params, response_model):
+                self.calls.append(method)
+                assert method == "hotel_search"
+                return HotelSearchResult(
+                    hotels=[
+                        {
+                            "hotel_id": "h1",
+                            "name": "Hotel One",
+                            "location": "London",
+                            "price_per_night_usd": 180,
+                            "rating": 4.2,
+                        }
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        transport = AliasTransport()
+        adapter = TravelHackingAdapter(profile="stay")
+        adapter._transports = {
+            "trivago": _TransportEntry(name="trivago", transport=transport),
+        }
+
+        results = await adapter.search_hotels(
+            HotelSearchParams(
+                location="London",
+                check_in="2026-06-10",
+                check_out="2026-06-12",
+                guests=2,
+            )
+        )
+
+        assert transport.calls[0] == "hotel_search"
+        assert "search_hotels" not in transport.calls
+        assert results[0].name == "Hotel One"
+
+    @pytest.mark.asyncio
+    async def test_search_hotels_uses_skiplagged_destination_shape(self):
+        from adapters.travel_hacking import HotelSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class FakeTransport:
+            async def list_tools(self):
+                return [{"name": "sk_hotels_search", "description": "Find hotel rooms"}]
+
+            async def call(self, method, params, response_model):
+                assert method == "sk_hotels_search"
+                payload = params.model_dump()
+                assert payload["city"] == "Munich"
+                assert payload["checkin"] == "2026-06-12"
+                assert payload["checkout"] == "2026-06-13"
+                assert payload["numAdults"] == 2
+                assert payload["numRooms"] == 1
+                return HotelSearchResult(
+                    hotels=[
+                        {
+                            "hotel_id": "h1",
+                            "name": "Hotel One",
+                            "location": "Munich",
+                            "price_per_night_usd": 250,
+                            "rating": 4.5,
+                        }
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="stay")
+        adapter._transports = {
+            "skiplagged": _TransportEntry(name="skiplagged", transport=FakeTransport()),
+        }
+
+        results = await adapter.search_hotels(
+            HotelSearchParams(
+                location="Munich",
+                check_in="2026-06-12",
+                check_out="2026-06-13",
+                guests=2,
+            )
+        )
+
+        assert len(results) == 1
+        assert results[0].name == "Hotel One"
+
+    @pytest.mark.asyncio
+    async def test_search_hotels_uses_trivago_suggestions_and_accommodation_search(self):
+        from adapters.travel_hacking import TravelHackingAdapter, _TransportEntry
+
+        class FakeTransport:
+            def __init__(self):
+                self.calls: list[tuple[str, dict[str, object]]] = []
+
+            async def list_tools(self):
+                return [
+                    {"name": "trivago-search-suggestions", "description": "Find place suggestions"},
+                    {"name": "trivago-accommodation-search", "description": "Search accommodations"},
+                ]
+
+            async def call(self, method, params, response_model):
+                payload = params.model_dump()
+                self.calls.append((method, payload))
+
+                if method == "trivago-search-suggestions":
+                    return response_model.model_validate(
+                        {
+                            "suggestions": [
+                                {
+                                    "id": 123,
+                                    "ns": 77,
+                                    "location": "Munich",
+                                    "location_label": "Munich, Bavaria, Germany",
+                                }
+                            ]
+                        }
+                    )
+
+                assert method == "trivago-accommodation-search"
+                assert payload["id"] == 123
+                assert payload["ns"] == 77
+                assert payload["arrival"] == "2026-06-12"
+                assert payload["departure"] == "2026-06-13"
+                assert payload["adults"] == 2
+                return response_model.model_validate(
+                    {
+                        "accommodations": [
+                            {
+                                "id": "h1",
+                                "name": "Hotel One",
+                                "location": "Munich",
+                                "price": 250,
+                                "rating": 4.5,
+                                "amenities": ["wifi"],
+                                "bookingLink": "https://example.com/hotel-one",
+                            }
+                        ]
+                    }
+                )
+
+            async def close(self):
+                return None
+
+        transport = FakeTransport()
+        adapter = TravelHackingAdapter(profile="stay")
+        adapter._transports = {
+            "trivago": _TransportEntry(name="trivago", transport=transport),
+        }
+
+        results = await adapter.search_hotels(
+            HotelSearchParams(
+                location="Munich",
+                check_in="2026-06-12",
+                check_out="2026-06-13",
+                guests=2,
+            )
+        )
+
+        assert [call[0] for call in transport.calls] == [
+            "trivago-search-suggestions",
+            "trivago-accommodation-search",
+        ]
+        assert len(results) == 1
+        assert results[0].name == "Hotel One"
+        assert results[0].booking_url == "https://example.com/hotel-one"
+
+    @pytest.mark.asyncio
+    async def test_search_hotels_parses_markdown_text_results(self):
+        from adapters.travel_hacking import HotelSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class FakeTransport:
+            async def list_tools(self):
+                return [{"name": "sk_hotels_search", "description": "Find hotel rooms"}]
+
+            async def call(self, method, params, response_model):
+                assert method == "sk_hotels_search"
+                return response_model.model_validate(
+                    HotelSearchResult(
+                        text=(
+                            "# Hotels in Munich\n\n"
+                            "| Hotel | Rating | Price/night | Total | Amenities | Booking |\n"
+                            "| --- | --- | --- | --- | --- | --- |\n"
+                            "| **Hotel One**<br/>Munich | 4★ · 8.6/10 | $145 | $184 | Free internet, Breakfast | "
+                            "[View deal](https://skiplagged.com/hotel/43249/hotel-one/2026-06-12/2026-06-13) |\n"
+                        )
+                    ).model_dump()
+                )
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="stay")
+        adapter._transports = {
+            "skiplagged": _TransportEntry(name="skiplagged", transport=FakeTransport()),
+        }
+
+        results = await adapter.search_hotels(
+            HotelSearchParams(
+                location="Munich",
+                check_in="2026-06-12",
+                check_out="2026-06-13",
+                guests=2,
+            )
+        )
+
+        assert len(results) == 1
+        assert results[0].hotel_id == "43249"
+        assert results[0].name == "Hotel One"
+        assert results[0].price_per_night_usd == 145
+        assert results[0].amenities == ["Free internet", "Breakfast"]
+        assert results[0].booking_url == "https://skiplagged.com/hotel/43249/hotel-one/2026-06-12/2026-06-13"
+
+    @pytest.mark.asyncio
+    async def test_search_hotels_uses_trivago_city_and_lowercase_dates(self):
+        from adapters.travel_hacking import HotelSearchResult, TravelHackingAdapter, _TransportEntry
+
+        class FakeTransport:
+            async def list_tools(self):
+                return [{"name": "hotel_search", "description": "Search hotels on Trivago"}]
+
+            async def call(self, method, params, response_model):
+                assert method == "hotel_search"
+                payload = params.model_dump()
+                assert payload["city"] == "Munich"
+                assert payload["checkin"] == "2026-06-12"
+                assert payload["checkout"] == "2026-06-13"
+                assert payload["adults"] == 2
+                assert payload["maxPricePerNight"] == 500
+                return HotelSearchResult(
+                    hotels=[
+                        {
+                            "hotel_id": "h1",
+                            "name": "Hotel One",
+                            "location": "Munich",
+                            "price_per_night_usd": 250,
+                            "rating": 4.5,
+                        }
+                    ]
+                )
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="stay")
+        adapter._transports = {
+            "trivago": _TransportEntry(name="trivago", transport=FakeTransport()),
+        }
+
+        results = await adapter.search_hotels(
+            HotelSearchParams(
+                location="Munich",
+                check_in="2026-06-12",
+                check_out="2026-06-13",
+                guests=2,
+                max_price_per_night=500,
+            )
+        )
+
+        assert len(results) == 1
+        assert results[0].name == "Hotel One"
+
+    @pytest.mark.asyncio
+    async def test_search_flights_reports_all_backend_failures(self):
+        from adapters.travel_hacking import TravelHackingAdapter, _TransportEntry
+
+        class FailingTransport:
+            def __init__(self, label: str):
+                self.label = label
+
+            async def call(self, method, params, response_model):
+                raise RuntimeError(f"{self.label} unreachable")
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="flights")
+        adapter._transports = {
+            "kiwi": _TransportEntry(name="kiwi", transport=FailingTransport("kiwi")),
+            "skiplagged": _TransportEntry(name="skiplagged", transport=FailingTransport("skiplagged")),
+        }
+
+        with pytest.raises(RuntimeError) as exc:
+            await adapter.search_flights(
+                FlightSearchParams(origin="JFK", destination="LAX", departure_date="2026-07-10")
+            )
+
+        message = str(exc.value)
+        assert "kiwi: kiwi unreachable" in message
+        assert "skiplagged: skiplagged unreachable" in message
+
+    @pytest.mark.asyncio
+    async def test_search_hotels_reports_all_backend_failures(self):
+        from adapters.travel_hacking import TravelHackingAdapter, _TransportEntry
+
+        class FailingTransport:
+            def __init__(self, label: str):
+                self.label = label
+
+            async def call(self, method, params, response_model):
+                raise RuntimeError(f"{self.label} unreachable")
+
+            async def close(self):
+                return None
+
+        adapter = TravelHackingAdapter(profile="stay")
+        adapter._transports = {
+            "trivago": _TransportEntry(name="trivago", transport=FailingTransport("trivago")),
+            "skiplagged": _TransportEntry(name="skiplagged", transport=FailingTransport("skiplagged")),
+        }
+
+        with pytest.raises(RuntimeError) as exc:
+            await adapter.search_hotels(
+                HotelSearchParams(
+                    location="Munich",
+                    check_in="2026-06-12",
+                    check_out="2026-06-13",
+                    guests=2,
+                )
+            )
+
+        message = str(exc.value)
+        assert "trivago: trivago unreachable" in message
+        assert "skiplagged: skiplagged unreachable" in message
 
 
 # --- Streamable HTTP Transport Tests ---

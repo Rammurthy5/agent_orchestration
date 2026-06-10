@@ -1,323 +1,132 @@
 # Agent Orchestration
 
-Multi-agent AI orchestration platform. A Go CLI and orchestrator routes natural language tasks via gRPC to specialized Python AI agents (Flights, Marketplace, Stay, Twitter), backed by PostgreSQL/PgVector for memory.
+Multi-agent AI orchestration platform with a Go orchestrator and specialized Python agents (Flights, Stay, Marketplace, Twitter). The system routes natural language queries to the right agent, executes tool-backed reasoning, and returns grounded responses with telemetry.
 
-## Prerequisites
+## What This Repository Solves
 
-- Go 1.23+
-- Python 3.11+
-- PostgreSQL 15+ with pgvector extension
-- [buf](https://buf.build/) (for protobuf generation)
-- Docker (optional, for local infra)
+- Routes heterogeneous user intents to specialized agents.
+- Enforces an adapter boundary between reasoning agents and external data/tool providers.
+- Tracks quality through deterministic and judge-based evaluation suites.
+- Supports production-oriented observability, retry behavior, and persistence.
 
-## Setup
+## Problem Definition and Evaluation Metrics
 
-### Go (Orchestrator)
-
-```bash
-# Clone
-git clone https://github.com/rsi03/agent-orchestration.git
-cd agent-orchestration
-
-# Install Go dependencies
-go mod tidy
-
-# Build the orchestrator binary
-go build -o bin/orchestrator ./cmd/orchestrator
-```
-
-### Python (Agents)
+This project treats quality as measurable, not descriptive. Evaluation requirements are framed around three problem-definition dimensions:
 
-```bash
-# Create and activate a virtual environment
-python3 -m venv .venv
-source .venv/bin/activate
+### 1) Scoping Accuracy
 
-# Install the package in editable mode with dev dependencies
-pip install -e ".[dev]"
+Goal: the correct domain agent handles the request, and out-of-scope requests are refused or rerouted safely.
 
-# Generate Python gRPC stubs (requires grpcio-tools)
-python -m grpc_tools.protoc \
-  -I protos \
-  --python_out=agents/gen \
-  --grpc_python_out=agents/gen \
-  protos/orchestrator/v1/orchestrator.proto
-
-# Fix import paths in generated stubs
-sed -i '' 's/from orchestrator\.v1 import/from agents.gen.orchestrator.v1 import/' \
-  agents/gen/orchestrator/v1/orchestrator_pb2_grpc.py
-```
+Primary metrics:
 
-### Protobuf (Go stubs)
+- Routing accuracy (% correct agent selection)
+- Scope rejection correctness (% invalid domain queries rejected)
+- False-accept rate (out-of-scope accepted as in-scope)
 
-```bash
-# Requires buf CLI (https://buf.build/docs/installation)
-buf generate protos/
-```
+Relevant suites:
 
-## Configuration
+- Routing evals
+- Agent scope evals
 
-### Environment Variables (Local Development)
+### 2) Clarity and Groundedness
 
-Most variables are optional because defaults are provided. For real local runs, set at least `LLM_API_KEY` (for LLM calls) and ensure PostgreSQL is reachable via `DATABASE_URL`.
+Goal: outputs are useful, traceable to observations, and non-hallucinated.
 
-#### Core service variables
+Primary metrics:
 
-| Variable | Default | Required? | Used by | Description |
-|----------|---------|-----------|---------|-------------|
-| `ORCHESTRATOR_PORT` | `50051` | No | Go orchestrator | gRPC server listen port |
-| `AGENT_ENDPOINT` | `localhost:50052` | No | Go orchestrator | Python agent gRPC target |
-| `AGENT_TIMEOUT_SECONDS` | `30` | No | Go orchestrator | Per-agent call timeout |
-| `AGENT_MAX_RETRIES` | `3` | No | Go orchestrator | Retry attempts for transient failures |
-| `DATABASE_URL` | `postgresql://localhost:5432/orchestrator` | Usually | Go + Python | PostgreSQL connection string for memory, conversations, eval persistence |
+- Hallucination rate / grounding pass rate
+- Trajectory quality score (reasoning-action-observation coherence)
+- Relevance/helpfulness score (judge-based)
 
-#### Telemetry variables
+Relevant suites:
 
-| Variable | Default | Required? | Used by | Description |
-|----------|---------|-----------|---------|-------------|
-| `OTEL_SERVICE_NAME` | `orchestrator` | No | Go orchestrator | OpenTelemetry service name |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | No | Go orchestrator | OTLP collector endpoint |
+- Hallucination evals
+- ReAct trajectory evals
+- LLM-judge relevance checks
 
-#### LLM variables (Python agents)
+### 3) Reliability and Performance
 
-| Variable | Default | Required? | Used by | Description |
-|----------|---------|-----------|---------|-------------|
-| `LLM_API_BASE` | `https://api.openai.com/v1` | No | Python agent service | OpenAI-compatible API base URL |
-| `LLM_API_KEY` | empty | Yes (for real model calls) | Python agent service | API key for chat completions |
-| `LLM_MODEL` | `gpt-5.4-mini` | No | Python agent service | Model name used for agent reasoning |
+Goal: system remains dependable under retries, failures, and runtime budgets.
 
-#### MCP adapter fallback variables
+Primary metrics:
 
-MCP adapters first read server config from `.vscode/mcp.json`. If a server entry is missing, these environment variables are used as fallback.
+- Latency distribution (orchestration, agent, tool)
+- MCP transport correctness and retry behavior
+- Eval pass-rate threshold for CI gating
 
-| Variable | Default | Used by |
-|----------|---------|---------|
-| `SCRAPE_BADGER_MCP_URL` | `https://mcp.scrapebadger.com/mcp` | Marketplace / ScrapeBadger adapter |
-| `SCRAPE_BADGER_API_KEY` | empty | Marketplace / ScrapeBadger adapter |
-| `TRAVEL_HACKING_MCP_URL` | `http://localhost:8100/mcp` | Flights + Stay adapter |
-| `TRAVEL_HACKING_API_KEY` | empty | Flights + Stay adapter |
-| `TWITTER_MCP_URL` | `http://localhost:8101/mcp` | Twitter adapter fallback for older HTTP setups |
-| `TWITTER_MCP_API_KEY` | empty | Twitter adapter fallback for older HTTP setups |
-| `TWITTER_API_KEY` | empty | Twitter adapter direct-search fallback |
-| `TWITTER_API_SECRET_KEY` | empty | Twitter adapter direct-search fallback |
-| `TWITTER_ACCESS_TOKEN` | empty | Twitter adapter direct-search fallback |
-| `TWITTER_ACCESS_TOKEN_SECRET` | empty | Twitter adapter direct-search fallback |
+Relevant suites:
 
-The Twitter agent prefers the `twitter-mcp` stdio server defined in `.vscode/mcp.json`:
+- Latency evals
+- MCP transport evals
+- End-to-end domain evals
 
-```json
-{
-  "command": "npx",
-  "args": ["-y", "@enescinar/twitter-mcp"],
-  "env": {
-    "API_KEY": "...",
-    "API_SECRET_KEY": "...",
-    "ACCESS_TOKEN": "...",
-    "ACCESS_TOKEN_SECRET": "..."
-  }
-}
-```
+For complete test strategy and categories, see [EVALS.md](EVALS.md).
 
-The travel agents now mirror the toolkit-style split:
+## Offline Metrics Snapshot
 
-- Flights prefers `skiplagged`, then `kiwi`, then the legacy `travel-hacking` fallback.
-- Stay prefers `airbnb`, then `trivago`, then the legacy `travel-hacking` fallback.
-- Ferryhopper is available in the workspace config for future ferry-specific travel work.
+The following metrics were computed from the local eval artifact [evals/results/eval_run_1780492600.json](evals/results/eval_run_1780492600.json) on 2026-06-10.
 
-Those toolkit servers can be configured directly in `.vscode/mcp.json` using the same pattern as the existing `travel-hacking` entry.
+| Metric | Value |
+|--------|-------|
+| Total eval cases | 19 |
+| Overall pass rate | 100% |
+| Hallucination suite pass rate | 100% (8/8) |
+| Hallucination average score | 1.00 |
+| Tool correctness suite pass rate | 100% (8/8) |
+| Tool correctness average score | 1.00 |
+| Trajectory suite pass rate | 100% (3/3) |
+| Trajectory average score | 0.978 |
 
-Example local exports:
+### Snapshot Caveats
 
-```bash
-export DATABASE_URL="postgresql://localhost:5432/orchestrator"
-export LLM_API_KEY="<your-api-key>"
-export LLM_MODEL="gpt-5.4-mini"
+- This is an offline snapshot from one local run artifact, not a production trend.
+- The artifact includes `latency_ms` values of `0`, so latency claims should not be inferred from this snapshot.
+- Tool correctness in the current deterministic suite is a harness-level check and should be complemented with live/integration scoring for release decisions.
 
-# Optional MCP fallback vars (if not using .vscode/mcp.json)
-export SCRAPE_BADGER_API_KEY="<scrapebadger-key>"
-export TWITTER_API_KEY="<twitter-api-key>"
-export TWITTER_API_SECRET_KEY="<twitter-api-secret>"
-export TWITTER_ACCESS_TOKEN="<twitter-access-token>"
-export TWITTER_ACCESS_TOKEN_SECRET="<twitter-access-token-secret>"
-```
+## Data Processing: Sources, PII, Guardrails
 
-## Usage
+### Data Sources
 
-### Running Locally
+- Flights/Stay via travel MCP providers
+- Marketplace via ScrapeBadger MCP
+- Twitter via Twitter MCP transport
+- Internal persistence via PostgreSQL + PgVector (conversations, memory, tool calls, eval records)
 
-Start the Python agent service first, then the Go orchestrator:
+### PII and Sensitive Data Handling
 
-```bash
-# Terminal 1 — Python agent service (port 50052)
-source .venv/bin/activate
-python -m agents.server
+- Deterministic redaction of common PII/secrets in request and response paths.
+- Redaction applied before persistence in memory and repository layers.
+- Structured payload redaction for nested metadata and tool outputs.
 
-# Terminal 2 — Go orchestrator (port 50051)
-./bin/orchestrator
-```
+### Guardrails
 
-The orchestrator accepts gRPC requests on `:50051` and forwards them to the agent service on `:50052`.
-
-### Running with Docker Compose
-
-Use Docker Compose to run PostgreSQL (with pgvector), Python agents, and the Go orchestrator together.
-
-Note: the agents image now includes Node.js so it can launch stdio MCP servers such as `airbnb` and `twitter-mcp`. Docker Compose still falls back to the Twitter OAuth credentials directly if the stdio server is unavailable, so the four `TWITTER_*` variables above need to be set in your environment or `.env` before `docker compose up`.
-Docker Compose also mounts `.vscode/` into the agents container so the travel and marketplace agents can read the workspace MCP config at runtime.
-
-```bash
-# Copy example environment and set secrets (at least LLM_API_KEY)
-cp .env.example .env
-
-# Build and start all services
-docker compose up --build -d
-
-# Check service status
-docker compose ps
-
-# View logs (example: orchestrator)
-docker compose logs -f orchestrator
-```
-
-Service endpoints:
-
-- Orchestrator gRPC: `localhost:50051`
-- Agent service gRPC: `localhost:50052`
-- PostgreSQL: `localhost:5432`
-
-Stop and clean up:
-
-```bash
-docker compose down
-
-# Remove volumes too (deletes local postgres data)
-docker compose down -v
-```
-
-### Building Images Directly
-
-```bash
-# Go orchestrator image
-docker build -f Dockerfile.orchestrator -t agent-orchestration-orchestrator:local .
-
-# Python agent image
-docker build -f Dockerfile.agents -t agent-orchestration-agents:local .
-```
-
-### Running Tests
-
-#### Go
-
-```bash
-# Run all Go tests with race detection
-go test ./... -race -count=1
-
-# Verbose output
-go test ./... -race -count=1 -v
-
-# Run a specific package
-go test ./internal/orchestrator/ -race -count=1 -v
-
-# Run a single test
-go test ./internal/orchestrator -run TestRouteTaskStream_PropagatesRecvError -count=1
-```
-
-#### Python
-
-```bash
-# Activate the virtual environment
-source .venv/bin/activate
-
-# Run all Python package tests with coverage
-python -m pytest --cov agents/ tools/
-
-# Run a specific test file
-python -m pytest evals/test_agent_scope.py -v
-
-# Run tests matching a keyword
-python -m pytest -k "out_of_scope" -v
-```
-
-#### Evals
-
-```bash
-# Keep the virtual environment active
-source .venv/bin/activate
-
-# Run the evaluation suite
-python -m pytest evals/ -v
-
-# Run a specific eval file
-python -m pytest evals/test_marketplace_e2e.py -v
-
-# Run one eval by name
-python -m pytest evals/test_routing.py -k "routing_eval_suite" -v
-```
-
-#### End-to-End
-
-With both services running (see [Running Locally](#running-locally)), use `grpcurl` to send requests to the orchestrator:
-
-```bash
-# Install grpcurl (if not already installed)
-brew install grpcurl   # macOS
-# or: go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
-
-# Route a flights query
-grpcurl -plaintext -d '{
-  "query": "Find flights from NYC to London",
-  "session_id": "e2e-test-1"
-}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
-
-# Route a hotel query
-grpcurl -plaintext -d '{
-  "query": "Book a hotel in Tokyo for 3 nights",
-  "session_id": "e2e-test-2"
-}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
-
-# Route a marketplace query
-grpcurl -plaintext -d '{
-  "query": "Best price for noise-cancelling headphones",
-  "session_id": "e2e-test-3"
-}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
-
-# Route a twitter query
-grpcurl -plaintext -d '{
-  "query": "What is trending on Twitter right now?",
-  "session_id": "e2e-test-4"
-}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
-
-# Verify out-of-scope rejection (should return INVALID_ARGUMENT)
-grpcurl -plaintext -d '{
-  "query": "What is the meaning of life?",
-  "session_id": "e2e-test-5"
-}' localhost:50051 orchestrator.v1.OrchestratorService/RouteTask
-```
-
-You can also test the Python agent service directly:
-
-```bash
-# Call the agent service without the orchestrator
-grpcurl -plaintext -d '{
-  "agent_id": "flights",
-  "query": "Cheapest flight to San Francisco",
-  "session_id": "direct-test"
-}' localhost:50052 orchestrator.v1.AgentService/Execute
-```
+- Query safety checks for prompt injection and secret-retention attempts.
+- Out-of-scope refusal behavior per domain agent.
+- MCP adapter boundary pattern for external tool access, with retries and validation.
+
+## Documentation Map
+
+- System architecture: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Setup instructions: [SETUP.md](SETUP.md)
+- Usage and runbook: [USAGE.md](USAGE.md)
+- Evaluation strategy: [EVALS.md](EVALS.md)
 
 ## Project Structure
 
-```
-cmd/orchestrator/       Go entrypoint (gRPC server + graceful shutdown)
-internal/
-  config/              Environment-based configuration
-  orchestrator/        Task dispatch and response aggregation
-  retry/               Exponential backoff with jitter + circuit breaker
-  router/              Intent classification → agent routing
-  telemetry/           OpenTelemetry provider setup (OTLP exporter)
-pkg/grpcutil/          Shared gRPC interceptors (logging, tracing, recovery)
+```text
+cmd/               Go entrypoints
+internal/          Go orchestrator/router/retry/telemetry/db
+pkg/               Shared Go packages
+agents/            Python agent runtime and domains
+adapters/          MCP adapters (transport/auth/retries/normalization)
+tools/             Tool contracts and models
+evals/             Evaluation suites and runners
+migrations/        PostgreSQL/PgVector schema
+protos/            gRPC protobuf definitions
 ```
 
-## Architecture
+## Quick Start
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design and [REQUIREMENTS.md](REQUIREMENTS.md) for agent specifications.
+1. Follow [SETUP.md](SETUP.md).
+2. Start services and run commands from [USAGE.md](USAGE.md).
+3. Run eval suites from [EVALS.md](EVALS.md).

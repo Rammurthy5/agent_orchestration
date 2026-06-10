@@ -8,11 +8,6 @@
     }
   ],
   "servers": {
-    "travel-hacking": {
-      "type": "http",
-      "url": "http://127.0.0.1:8100/mcp",
-      "headers": {}
-    },
     "skiplagged": {
       "type": "http",
       "url": "https://mcp.skiplagged.com/mcp",
@@ -32,11 +27,6 @@
       "type": "http",
       "url": "https://mcp.ferryhopper.com/mcp",
       "headers": {}
-    },
-    "airbnb": {
-      "command": "npx",
-      "args": ["-y", "@openbnb/mcp-server-airbnb"],
-      "env": {}
     },
     "scrapebadger": {
       "type": "http",

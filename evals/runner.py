@@ -66,6 +66,7 @@ class EvalSuite:
         self.agent_id = agent_id
         self.cases: list[EvalCase] = []
         self.results: list[EvalResult] = []
+        self.last_run_ms: int | None = None
 
     def add_case(self, input: str, expected: str | None = None, **metadata: Any) -> None:
         """Add an eval case to the suite."""
@@ -91,6 +92,7 @@ class EvalSuite:
             List of EvalResult objects.
         """
         self.results = []
+        suite_start = time.perf_counter()
         for case in self.cases:
             start = time.perf_counter()
             actual, score, details = await scorer(case)
@@ -104,6 +106,7 @@ class EvalSuite:
                 details=details,
             )
             self.results.append(result)
+        self.last_run_ms = int((time.perf_counter() - suite_start) * 1000)
         return self.results
 
     @property
@@ -122,6 +125,7 @@ class EvalSuite:
 
     def summary(self) -> dict[str, Any]:
         """Return a summary of the eval run."""
+        case_latencies = [r.latency_ms for r in self.results if r.latency_ms is not None]
         return {
             "eval_type": self.eval_type,
             "agent_id": self.agent_id,
@@ -130,4 +134,7 @@ class EvalSuite:
             "failed": sum(1 for r in self.results if not r.passed),
             "pass_rate": self.pass_rate,
             "average_score": self.average_score,
+            "duration_ms": self.last_run_ms or 0,
+            "average_case_latency_ms": int(sum(case_latencies) / len(case_latencies)) if case_latencies else 0,
+            "max_case_latency_ms": max(case_latencies) if case_latencies else 0,
         }

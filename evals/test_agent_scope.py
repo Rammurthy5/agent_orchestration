@@ -1,4 +1,4 @@
-"""Tests that each agent rejects out-of-scope queries."""
+"""Tests that each agent returns a refusal for out-of-scope queries."""
 
 from __future__ import annotations
 
@@ -40,13 +40,14 @@ class TestFlightsRejectsOutOfScope:
         "Tell me about stocks and crypto",
     ])
     def test_rejects_irrelevant_query(self, servicer, query: str):
-        with pytest.raises(AbortError) as exc_info:
-            servicer.Execute(
-                type("Req", (), {"agent_id": "flights", "query": query, "session_id": "test", "metadata": {}})(),
-                DummyContext(),
-            )
-        assert exc_info.value.code == grpc.StatusCode.INVALID_ARGUMENT
-        assert "out of scope" in str(exc_info.value).lower()
+        resp = servicer.Execute(
+            type("Req", (), {"agent_id": "flights", "query": query, "session_id": "test", "metadata": {}})(),
+            DummyContext(),
+        )
+        assert resp.agent_id == "flights"
+        assert resp.answer
+        assert "can only help" in resp.answer.lower()
+        assert resp.steps == []
 
     @pytest.mark.parametrize("query", [
         "Find flights from NYC to Tokyo",
@@ -55,7 +56,7 @@ class TestFlightsRejectsOutOfScope:
         "Show me departure times from LAX",
     ])
     def test_accepts_in_scope_query(self, servicer, query: str):
-        """In-scope queries should NOT raise INVALID_ARGUMENT."""
+        """In-scope queries should be handled normally."""
         servicer._agents[AgentID.FLIGHTS].run = AsyncMock(
             return_value=AgentResponse(agent_id=AgentID.FLIGHTS, answer="ok")
         )
@@ -67,28 +68,26 @@ class TestFlightsRejectsOutOfScope:
         assert resp.agent_id == "flights"
 
 
-class TestMarketplaceAcceptsAllQueries:
-    """Marketplace agent is the fallback — accepts all queries routed to it."""
+class TestMarketplaceScope:
+    """Marketplace should only answer shopping/product queries."""
 
     @pytest.mark.parametrize("query", [
         "Find flights to London",
         "Book a hotel room for tonight",
         "Trending tweets today",
-        "Find the best price for a MacBook",
-        "Compare laptop deals under $1000",
-        "Where can I buy a new phone?",
-        "Show me product listings for headphones",
+        "What is the meaning of life?",
+        "Help me cook pasta",
+        "Convert 100 USD to EUR",
     ])
-    def test_accepts_any_query(self, servicer, query: str):
-        servicer._agents[AgentID.MARKETPLACE].run = AsyncMock(
-            return_value=AgentResponse(agent_id=AgentID.MARKETPLACE, answer="ok")
-        )
-        servicer._memory.store_conversation = AsyncMock()
+    def test_rejects_irrelevant_query(self, servicer, query: str):
         resp = servicer.Execute(
             type("Req", (), {"agent_id": "marketplace", "query": query, "session_id": "test", "metadata": {}})(),
             DummyContext(),
         )
         assert resp.agent_id == "marketplace"
+        assert resp.answer
+        assert "can only help" in resp.answer.lower()
+        assert resp.steps == []
 
     @pytest.mark.parametrize("query", [
         "Find the best price for a MacBook",
@@ -106,6 +105,18 @@ class TestMarketplaceAcceptsAllQueries:
             DummyContext(),
         )
         assert resp.agent_id == "marketplace"
+
+    def test_stone_age_is_refused(self, servicer):
+        resp = servicer.Execute(
+            type(
+                "Req",
+                (),
+                {"agent_id": "marketplace", "query": "what is stone age", "session_id": "test", "metadata": {}},
+            )(),
+            DummyContext(),
+        )
+        assert resp.agent_id == "marketplace"
+        assert "can only help" in resp.answer.lower()
 
 
 class TestStayRejectsOutOfScope:
@@ -120,13 +131,14 @@ class TestStayRejectsOutOfScope:
         "Convert 100 USD to EUR",
     ])
     def test_rejects_irrelevant_query(self, servicer, query: str):
-        with pytest.raises(AbortError) as exc_info:
-            servicer.Execute(
-                type("Req", (), {"agent_id": "stay", "query": query, "session_id": "test", "metadata": {}})(),
-                DummyContext(),
-            )
-        assert exc_info.value.code == grpc.StatusCode.INVALID_ARGUMENT
-        assert "out of scope" in str(exc_info.value).lower()
+        resp = servicer.Execute(
+            type("Req", (), {"agent_id": "stay", "query": query, "session_id": "test", "metadata": {}})(),
+            DummyContext(),
+        )
+        assert resp.agent_id == "stay"
+        assert resp.answer
+        assert "can only help" in resp.answer.lower()
+        assert resp.steps == []
 
     @pytest.mark.parametrize("query", [
         "Find a hotel in downtown Tokyo",
@@ -158,13 +170,14 @@ class TestTwitterRejectsOutOfScope:
         "What should I have for dinner?",
     ])
     def test_rejects_irrelevant_query(self, servicer, query: str):
-        with pytest.raises(AbortError) as exc_info:
-            servicer.Execute(
-                type("Req", (), {"agent_id": "twitter", "query": query, "session_id": "test", "metadata": {}})(),
-                DummyContext(),
-            )
-        assert exc_info.value.code == grpc.StatusCode.INVALID_ARGUMENT
-        assert "out of scope" in str(exc_info.value).lower()
+        resp = servicer.Execute(
+            type("Req", (), {"agent_id": "twitter", "query": query, "session_id": "test", "metadata": {}})(),
+            DummyContext(),
+        )
+        assert resp.agent_id == "twitter"
+        assert resp.answer
+        assert "can only help" in resp.answer.lower()
+        assert resp.steps == []
 
     @pytest.mark.parametrize("query", [
         "What's trending on Twitter today?",

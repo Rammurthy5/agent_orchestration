@@ -16,6 +16,8 @@ class FlightSearchParams(BaseModel):
     destination: str
     departure_date: str
     return_date: str | None = None
+    # Not sent to MCP — used by the adapter to prefer a specific backend
+    preferred_backend: str | None = Field(default=None, exclude=True)
 
 
 class FlightResult(BaseModel):

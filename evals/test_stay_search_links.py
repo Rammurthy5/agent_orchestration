@@ -46,6 +46,7 @@ class FakeTravelAdapter:
                 price_per_night_usd=180.0,
                 rating=4.4,
                 amenities=["wifi", "breakfast"],
+                booking_url="https://example.com/munich-central-hotel",
             )
         ]
 
@@ -61,6 +62,8 @@ async def test_stay_agent_passes_search_link_into_final_answer() -> None:
 
     assert response.tool_calls
     assert "search_url" not in response.steps[0].observation
+    assert "booking_url" in response.steps[0].observation
+    assert "Booking link" in response.answer
 
 
 async def test_stay_agent_appends_search_link_on_tool_error() -> None:
@@ -75,4 +78,5 @@ async def test_stay_agent_appends_search_link_on_tool_error() -> None:
 
     assert response.tool_calls
     assert "Live hotel search was unavailable" in response.answer
+    assert "boom" in response.answer
     assert "Search link:" in response.answer

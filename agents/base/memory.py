@@ -14,6 +14,8 @@ import asyncpg
 from langsmith import traceable
 from pydantic import BaseModel, Field
 
+from agents.base.safety import redact_text, redact_value
+
 
 class MemoryEntry(BaseModel):
     """A stored memory with embedding vector."""
@@ -83,21 +85,28 @@ class Memory:
         if entry.ttl_hours:
             expires_at = datetime.now(timezone.utc) + timedelta(hours=entry.ttl_hours)
 
+        safe_entry = entry.model_copy(
+            update={
+                "content": redact_text(entry.content),
+                "metadata": redact_value(entry.metadata),
+            }
+        )
+
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO memories (id, agent_id, namespace, content, embedding, metadata, expires_at)
                 VALUES ($1, $2, $3, $4, $5::vector, $6::jsonb, $7)
                 """,
-                entry.id,
-                entry.agent_id,
-                entry.namespace,
-                entry.content,
+                safe_entry.id,
+                safe_entry.agent_id,
+                safe_entry.namespace,
+                safe_entry.content,
                 _vector_literal(embedding),
-                _json_dumps(entry.metadata),
+                _json_dumps(safe_entry.metadata),
                 expires_at,
             )
-        return entry.id
+        return safe_entry.id
 
     @traceable(name="memory.search")
     async def search(
@@ -152,21 +161,28 @@ class Memory:
         if entry.ttl_hours:
             expires_at = datetime.now(timezone.utc) + timedelta(hours=entry.ttl_hours)
 
+        safe_entry = entry.model_copy(
+            update={
+                "query": redact_text(entry.query),
+                "response": redact_text(entry.response),
+            }
+        )
+
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO conversations (id, session_id, agent_id, query, response, latency_ms, expires_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
                 """,
-                entry.id,
-                entry.session_id,
-                entry.agent_id,
-                entry.query,
-                entry.response,
-                entry.latency_ms,
+                safe_entry.id,
+                safe_entry.session_id,
+                safe_entry.agent_id,
+                safe_entry.query,
+                safe_entry.response,
+                safe_entry.latency_ms,
                 expires_at,
             )
-        return entry.id
+        return safe_entry.id
 
     @traceable(name="memory.get_conversation_history")
     async def get_conversation_history(

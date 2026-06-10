@@ -17,6 +17,7 @@ from grpc_reflection.v1alpha import reflection
 
 from agents.base import AgentID, AgentRequest, BaseAgent, Memory
 from agents.base.llm import LLMClient
+from agents.base.safety import redact_text
 from agents.base.types import OutOfScopeError
 from agents.flights import FlightsAgent
 from agents.marketplace import MarketplaceAgent
@@ -76,14 +77,14 @@ class AgentServiceServicer(orchestrator_pb2_grpc.AgentServiceServicer):
             # Store conversation in memory (best-effort, non-blocking on failure)
             try:
                 from agents.base.memory import ConversationEntry
-                
+
                 store_future = asyncio.run_coroutine_threadsafe(
                     self._memory.store_conversation(
                         ConversationEntry(
                             session_id=request.session_id,
                             agent_id=agent_id,
-                            query=request.query,
-                            response=response.answer,
+                            query=redact_text(request.query),
+                            response=redact_text(response.answer),
                             latency_ms=response.latency_ms,
                         )
                     ),

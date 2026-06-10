@@ -115,13 +115,43 @@ class StayAgent(BaseAgent):
 
     @traceable(name="stay.final_answer")
     async def final_answer(self, steps: list[Step], request: AgentRequest) -> str:
+        error = self._extract_tool_error(steps)
+        if error:
+            return self._build_unavailable_response(error, steps)
+
         messages = self._build_messages(
             request,
             steps,
-            extra="Synthesize a final answer for the user based on the tool results above.",
+            extra=(
+                "Synthesize a final answer for the user based on the tool results above. "
+                "If any hotel result includes a booking_url, include it explicitly as a clickable booking link."
+            ),
         )
         response = await self.llm.complete(messages)
-        return self._append_fallback_search_link(response.content, steps)
+        answer_with_links = self._append_booking_links(response.content, steps)
+        return self._append_fallback_search_link(answer_with_links, steps)
+
+    def _extract_tool_error(self, steps: list[Step]) -> str | None:
+        if not steps or not steps[-1].observation:
+            return None
+
+        try:
+            payload = json.loads(steps[-1].observation)
+        except Exception:
+            return None
+
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if error:
+                return str(error)
+        return None
+
+    def _build_unavailable_response(self, error: str, steps: list[Step]) -> str:
+        search_url = self._extract_search_url(steps)
+        fallback_note = f"Live hotel search was unavailable ({error}), so here is a direct search link instead."
+        if search_url:
+            return f"{fallback_note}\nSearch link: {search_url}"
+        return fallback_note
 
     def _build_hotel_search_url(self, params: HotelSearchParams) -> str:
         query = (
@@ -134,22 +164,65 @@ class StayAgent(BaseAgent):
         return "https://www.google.com/search?q=" + quote_plus(query)
 
     def _append_fallback_search_link(self, answer: str, steps: list[Step]) -> str:
-        if not steps or not steps[-1].observation:
+        search_url = self._extract_search_url(steps)
+        if not search_url:
             return answer
 
-        try:
-            payload = json.loads(steps[-1].observation)
-        except Exception:
-            return answer
-
-        if not isinstance(payload, dict):
-            return answer
-
-        search_url = payload.get("search_url")
-        if not search_url or search_url in answer:
+        if search_url in answer:
             return answer
 
         fallback_note = "Live hotel search was unavailable, so here is a direct search link instead."
         if answer.strip():
             return f"{answer}\n\n{fallback_note}\nSearch link: {search_url}"
         return f"{fallback_note}\nSearch link: {search_url}"
+
+    def _append_booking_links(self, answer: str, steps: list[Step]) -> str:
+        booking_links = self._extract_booking_links(steps)
+        if not booking_links:
+            return answer
+
+        missing_links = [(name, url) for name, url in booking_links if url not in answer]
+        if not missing_links:
+            return answer
+
+        lines = [f"Booking link: {name} - {url}" for name, url in missing_links]
+        if answer.strip():
+            return f"{answer}\n\n" + "\n".join(lines)
+        return "\n".join(lines)
+
+    def _extract_booking_links(self, steps: list[Step]) -> list[tuple[str, str]]:
+        if not steps or not steps[-1].observation:
+            return []
+
+        try:
+            payload = json.loads(steps[-1].observation)
+        except Exception:
+            return []
+
+        if not isinstance(payload, list):
+            return []
+
+        links: list[tuple[str, str]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            booking_url = item.get("booking_url")
+            name = item.get("name")
+            if isinstance(booking_url, str) and booking_url and isinstance(name, str) and name:
+                links.append((name, booking_url))
+        return links
+
+    def _extract_search_url(self, steps: list[Step]) -> str | None:
+        if not steps or not steps[-1].observation:
+            return None
+
+        try:
+            payload = json.loads(steps[-1].observation)
+        except Exception:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        search_url = payload.get("search_url")
+        return str(search_url) if search_url else None

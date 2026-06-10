@@ -185,12 +185,18 @@ class TestEvalRepository:
         record = EvalRecord(
             eval_type="latency",
             agent_id="flights",
-            input="test",
+            input="contact alice@example.com",
             score=0.95,
+            actual="call +1 415 555 1212",
+            metadata={"note": "API_KEY=secret123"},
         )
         result_id = await repo.store(record)
         assert result_id == record.id
         conn.execute.assert_called_once()
+        sql, *params = conn.execute.call_args.args
+        assert "<redacted-email>" in params[3]
+        assert "<redacted-phone>" in params[5]
+        assert "<redacted-secret>" in params[7]
 
 
 class TestMemoryConnect:

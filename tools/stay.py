@@ -5,7 +5,7 @@ These functions are invoked by the Stay agent via the MCP adapter.
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class HotelSearchParams(BaseModel):
@@ -21,12 +21,18 @@ class HotelSearchParams(BaseModel):
 class HotelResult(BaseModel):
     """A single hotel search result."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     hotel_id: str
     name: str
     location: str
     price_per_night_usd: float
     rating: float | None = None
     amenities: list[str] = []
+    booking_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("booking_url", "url", "bookingLink", "booking_link", "link"),
+    )
 
 
 class AvailabilityResult(BaseModel):

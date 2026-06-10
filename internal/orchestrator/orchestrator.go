@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rsi03/agent-orchestration/internal/config"
 	"github.com/rsi03/agent-orchestration/internal/db"
+	"github.com/rsi03/agent-orchestration/internal/safety"
 	pb "github.com/rsi03/agent-orchestration/internal/gen/orchestrator/v1"
 	"github.com/rsi03/agent-orchestration/internal/retry"
 	"github.com/rsi03/agent-orchestration/internal/router"
@@ -118,12 +119,13 @@ func (o *Orchestrator) RouteTask(ctx context.Context, req *pb.RouteTaskRequest) 
 	// Store conversation record (best-effort — don't fail the request on DB error)
 	if o.db != nil {
 		convID := uuid.NewString()
+		safeQuery, safeResponse := safety.RedactConversation(req.GetQuery(), resp.GetAnswer())
 		if storeErr := o.db.Conversations.Store(ctx, &db.Conversation{
 			ID:        convID,
 			SessionID: req.GetSessionId(),
 			AgentID:   string(agentID),
-			Query:     req.GetQuery(),
-			Response:  resp.GetAnswer(),
+			Query:     safeQuery,
+			Response:  safeResponse,
 			LatencyMs: resp.GetLatencyMs(),
 		}); storeErr != nil {
 			slog.WarnContext(ctx, "failed to store conversation", "error", storeErr)

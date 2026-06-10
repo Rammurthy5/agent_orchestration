@@ -8,7 +8,7 @@ from pathlib import Path
 
 from langsmith import traceable
 
-from agents.base.llm import LLMClient, LLMResponse, Message, ToolSpec
+from agents.base.llm import LLMClient, Message, ToolSpec
 from agents.base.types import (
     AgentID,
     AgentRequest,
@@ -17,6 +17,13 @@ from agents.base.types import (
     ReflectionResult,
     Step,
     ToolCall,
+)
+from agents.base.safety import (
+    assess_query,
+    build_scope_refusal,
+    redact_agent_request,
+    redact_agent_response,
+    redact_text,
 )
 
 
@@ -47,36 +54,62 @@ class BaseAgent(ABC):
     ) -> list[Message]:
         """Build conversation messages from request and ReAct history."""
         messages = [Message(role="system", content=self._load_system_prompt())]
-        messages.append(Message(role="user", content=request.query))
+        messages.append(Message(role="user", content=redact_text(request.query)))
 
         for step in steps:
-            messages.append(Message(role="assistant", content=f"Thought: {step.thought}"))
+            messages.append(Message(role="assistant", content=f"Thought: {redact_text(step.thought)}"))
             if step.action and step.observation:
                 # Use assistant role for observation replay to avoid invalid tool message shape.
                 messages.append(
                     Message(
                         role="assistant",
-                        content=f"Observation from {step.action}: {step.observation}",
+                        content=f"Observation from {step.action}: {redact_text(step.observation)}",
                     )
                 )
 
         if extra:
-            messages.append(Message(role="user", content=extra))
+            messages.append(Message(role="user", content=redact_text(extra)))
 
         return messages
 
     @traceable(name="agent.run")
     async def run(self, request: AgentRequest) -> AgentResponse:
         """Execute the full ReAct loop for a request."""
-        self.validate_query(request)
         start = time.perf_counter()
+        safety = assess_query(request.query, self.agent_id)
+        safe_request = redact_agent_request(request)
+
+        if not safety.allowed:
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            response = AgentResponse(
+                agent_id=self.agent_id,
+                answer=safety.refusal_message or "I can't help with that request.",
+                steps=[],
+                tool_calls=[],
+                latency_ms=latency_ms,
+            )
+            return redact_agent_response(response)
+
+        try:
+            self.validate_query(request)
+        except OutOfScopeError:
+            latency_ms = int((time.perf_counter() - start) * 1000)
+            response = AgentResponse(
+                agent_id=self.agent_id,
+                answer=build_scope_refusal(self.agent_id),
+                steps=[],
+                tool_calls=[],
+                latency_ms=latency_ms,
+            )
+            return redact_agent_response(response)
+
         steps: list[Step] = []
         tool_calls: list[ToolCall] = []
 
         for _ in range(self.max_iterations):
-            thought = await self.reasoning(request, steps)
+            thought = await self.reasoning(safe_request, steps)
 
-            tool_call = await self.tool_selection(thought, request, steps)
+            tool_call = await self.tool_selection(thought, safe_request, steps)
             if tool_call is None:
                 break
 
@@ -92,20 +125,20 @@ class BaseAgent(ABC):
             )
             steps.append(step)
 
-            reflection = await self.reflect(steps, request)
+            reflection = await self.reflect(steps, safe_request)
             if not reflection.should_continue:
                 break
 
-        answer = await self.final_answer(steps, request)
+        answer = await self.final_answer(steps, safe_request)
         latency_ms = int((time.perf_counter() - start) * 1000)
 
-        return AgentResponse(
+        return redact_agent_response(AgentResponse(
             agent_id=self.agent_id,
             answer=answer,
             steps=steps,
             tool_calls=tool_calls,
             latency_ms=latency_ms,
-        )
+        ))
 
     @abstractmethod
     @traceable(name="agent.reasoning")

@@ -67,10 +67,24 @@ class FlightsAgent(BaseAgent):
                 return fallback
             return None
 
+        parameters = dict(response.tool_call.arguments)
+        if response.tool_call.name == "search_flights":
+            preferred = self._detect_preferred_backend(request.query)
+            if preferred:
+                parameters["preferred_backend"] = preferred
+
         return ToolCall(
             tool_name=response.tool_call.name,
-            parameters=response.tool_call.arguments,
+            parameters=parameters,
         )
+
+    def _detect_preferred_backend(self, query: str) -> str | None:
+        lowered = query.lower()
+        if "skiplagged" in lowered:
+            return "skiplagged"
+        if "kiwi" in lowered:
+            return "kiwi"
+        return None
 
     @traceable(name="flights.execute")
     async def execute(self, tool_call: ToolCall) -> str:
@@ -127,6 +141,10 @@ class FlightsAgent(BaseAgent):
 
     @traceable(name="flights.final_answer")
     async def final_answer(self, steps: list[Step], request: AgentRequest) -> str:
+        error = self._extract_tool_error(steps)
+        if error:
+            return self._build_unavailable_response(error, steps)
+
         messages = self._build_messages(
             request,
             steps,
@@ -137,6 +155,28 @@ class FlightsAgent(BaseAgent):
         )
         response = await self.llm.complete(messages)
         return self._append_fallback_search_link(response.content, steps)
+
+    def _extract_tool_error(self, steps: list[Step]) -> str | None:
+        if not steps or not steps[-1].observation:
+            return None
+
+        try:
+            payload = json.loads(steps[-1].observation)
+        except Exception:
+            return None
+
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if error:
+                return str(error)
+        return None
+
+    def _build_unavailable_response(self, error: str, steps: list[Step]) -> str:
+        search_url = self._extract_search_url(steps)
+        fallback_note = f"Live flight search was unavailable ({error}), so here is a direct search link instead."
+        if search_url:
+            return f"{fallback_note}\nSearch link: {search_url}"
+        return fallback_note
 
     def _build_flight_search_call(self, query: str) -> ToolCall | None:
         lowered = query.lower()
@@ -205,22 +245,29 @@ class FlightsAgent(BaseAgent):
         )
 
     def _append_fallback_search_link(self, answer: str, steps: list[Step]) -> str:
-        if not steps or not steps[-1].observation:
+        search_url = self._extract_search_url(steps)
+        if not search_url:
             return answer
 
-        try:
-            payload = json.loads(steps[-1].observation)
-        except Exception:
-            return answer
-
-        if not isinstance(payload, dict):
-            return answer
-
-        search_url = payload.get("search_url")
-        if not search_url or search_url in answer:
+        if search_url in answer:
             return answer
 
         fallback_note = "Live flight search was unavailable, so here is a direct search link instead."
         if answer.strip():
             return f"{answer}\n\n{fallback_note}\nSearch link: {search_url}"
         return f"{fallback_note}\nSearch link: {search_url}"
+
+    def _extract_search_url(self, steps: list[Step]) -> str | None:
+        if not steps or not steps[-1].observation:
+            return None
+
+        try:
+            payload = json.loads(steps[-1].observation)
+        except Exception:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        search_url = payload.get("search_url")
+        return str(search_url) if search_url else None
